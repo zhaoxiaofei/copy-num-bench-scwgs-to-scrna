@@ -1,0 +1,1429 @@
+### <MAJOR_REVISION_STEPS>
+### Retrieved from https://sorryios.ai/chat/c7dbd9a3-f332-4ca8-a0c1-1614602bdbaf
+### Applied manual changes to ensure that copykat runs successfully
+### Retrieved from https://sorryios.ai/chat/fc1ff27c-6b31-4d7a-8878-6cfbfe8778ea
+### Applied manual changes to fix bugs from https://github.com/colomemaria/benchmark_scrnaseq_cnv_callers
+### Merged config tables at https://sorryios.ai/chat/23f54ffd-3645-48c3-a8ce-7e0ea14bb167
+### Added CaSpER, Numbat, and CONICSmat benchmarking rules
+### </MAJOR_REVISION_STEPS>
+
+### Modified pipeline to benchmark scRNA-seq CNV callers using paired scWGS/scRNA
+# data. Ground truth is derived from scWGS via Ginkgo, then lifted over from
+# hg19 to GRCh38, and compared against CNV calls from scRNA-seq callers.
+#
+# --- MODE 1 (BAM-based): config["cellname_celltype_scWGS_scRNA_tup_list"] ---
+#   A list of 4-element lists: [[cell_id, celltype, scWGS_bam, scRNA_bam], ...]
+#   - celltype determines whether a cell is treated as normal/reference or tumor:
+#     Reference celltypes (case-insensitive): N, Normal, Control, Ctrl, Reference,
+#       Ref, Diploid, BL, Lymphocyte, Lymphocite, Blood
+#     All other celltype strings are treated as tumor/case cells.
+#   - scWGS BAMs are aligned to UCSC hg19
+#   - scRNA BAMs are aligned to GRCh38
+#   A count matrix is generated from the scRNA BAMs via featureCounts.
+#
+# --- MODE 2 (Matrix-based): config["scWGS_matrix_pairs"] ---
+#   A 2-element list: [ [[cell_id, scWGS_bam], ...], matrix_filename ]
+#   - The first element is a list of pairs, each pair being [cell_id, scWGS_bam].
+#     cell_id must match a column header in the matrix file.
+#     scWGS BAMs are aligned to UCSC hg19.
+#   - The second element is the path to an RNA-seq transcript count matrix file
+#     (genes as rows, cell IDs as tab-separated column headers).
+#   In this mode, featureCounts is skipped; the provided matrix is used directly.
+#
+# Exactly one of cellname_celltype_scWGS_scRNA_tup_list or scWGS_matrix_pairs must be provided.
+#
+# Optional config keys:
+#   config["GINKGO_SH"]       - path to ginkgo.sh (default: /mnt/d/code/ginkgo/cli/ginkgo.sh)
+#   config["ginkgo_genome"]   - ginkgo genome name (default: "hg19")
+#   config["ginkgo_binning"]  - ginkgo binning scheme (default: "variable_500000_150_bwa")
+#   config["liftover_chain"]  - path to hg19ToHg38.over.chain.gz
+#   config["liftover_bin"]    - path to liftOver binary (default: "liftOver")
+#   config["gtf_grch38"]      - path to GRCh38 GTF for featureCounts (BAM mode only)
+#   config["gene_pos_grch38"] - path to gene position file for inferCNV (hg38_gencode_v27.txt)
+#   config["chrom_arm_pos"]   - path to chromosome arm positions (chromosome_arm_positions_grch38.txt)
+#   config["ref_matrix_cell_ids"] - optional list of cell IDs in the matrix to use as
+#                                   reference/normal cells (matrix mode only)
+#   config["bafextract_bin"]         - path to BAFExtract binary (CaSpER)
+#   config["bafextract_genome_list"] - path to BAFExtract hg38 genome list file
+#   config["bafextract_genome"]      - path to BAFExtract hg38 genome directory/prefix
+#   config["numbat_snp_vcf"]    - 1000G SNP VCF (hg38) for Numbat
+#   config["numbat_eagle_gmap"] - Eagle genetic map (hg38) for Numbat
+#   config["numbat_ref_panel"]  - 1000G reference panel dir for Numbat
+#   config["eagle_bin"]         - path to eagle binary (Numbat)
+# ==============================================================================
+
+import os
+import hashlib
+
+# ---------------------------------------------------------------------------
+# Helper: classify celltype as reference/normal or tumor
+# ---------------------------------------------------------------------------
+
+_REF_CELLTYPES = {
+    "n", "normal", "control", "ctrl", "reference", "ref",
+    "diploid", "bl", "lymphocyte", "lymphocite", "blood",
+}
+
+def _is_ref_celltype(celltype):
+    """Return True if celltype string denotes a normal/reference (diploid control) cell."""
+    return str(celltype).strip().lower() in _REF_CELLTYPES
+
+# ---------------------------------------------------------------------------
+# Determine mode and parse configuration
+# ---------------------------------------------------------------------------
+
+_has_bam_mode    = "cellname_celltype_scWGS_scRNA_tup_list" in config
+_has_matrix_mode = "scWGS_matrix_pairs" in config
+
+assert _has_bam_mode or _has_matrix_mode, (
+    "Config must provide either 'cellname_celltype_scWGS_scRNA_tup_list' (BAM mode) "
+    "or 'scWGS_matrix_pairs' (matrix mode)."
+)
+assert not (_has_bam_mode and _has_matrix_mode), (
+    "Config must provide exactly one of 'cellname_celltype_scWGS_scRNA_tup_list' or "
+    "'scWGS_matrix_pairs', not both."
+)
+
+MODE = "matrix" if _has_matrix_mode else "bam"
+
+# ---------------------------------------------------------------------------
+# Shared optional config
+# ---------------------------------------------------------------------------
+
+GINKGO_SH      = config.get("GINKGO_SH",      config.get("ginkgo_sh", "/mnt/d/code/ginkgo/cli/ginkgo.sh"))
+GINKGO_GENOME  = config.get("ginkgo_genome",   "hg19")
+GINKGO_BINNING = config.get("ginkgo_binning",  "variable_500000_150_bwa")
+LIFTOVER_CHAIN = config.get("liftover_chain",  "data/annotations/hg19ToHg38.over.chain.gz")
+LIFTOVER_BIN   = config.get("liftover_bin",    "liftOver")
+GTF_GRCH38     = config.get("gtf_grch38",      "data/annotations/gencode.v27.annotation.gtf")
+GENE_POS_FILE  = config.get("gene_pos_grch38", "data/annotations/hg38_gencode_v27.txt")
+GENE_POS_FILE_HG19  = config.get("gene_pos_hg19", "data/annotations/gencode_v19_gene_pos.txt")
+CHROM_ARM_POS  = config.get("chrom_arm_pos",   "data/annotations/chromosome_arm_positions_grch38.txt")
+
+# CaSpER / BAFExtract
+BAFEXTRACT_BIN         = config.get("bafextract_bin",         "tools/BAFExtract/bin/BAFExtract")
+BAFEXTRACT_GENOME_LIST = config.get("bafextract_genome_list", "data/annotations/genome_input_BAFExtract_hg38/hg38_genome_list")
+BAFEXTRACT_GENOME      = config.get("bafextract_genome",      "data/annotations/genome_input_BAFExtract_hg38/hg38")
+
+# Numbat / Eagle
+NUMBAT_SNP_VCF    = config.get("numbat_snp_vcf",    "data/annotations/genome1K.phase3.SNP_AF5e2.chr1toX.hg38.vcf.gz")
+NUMBAT_EAGLE_GMAP = config.get("numbat_eagle_gmap", "data/annotations/genetic_map_hg38_withX.txt.gz")
+NUMBAT_REF_PANEL  = config.get("numbat_ref_panel",  "data/annotations/1000G_hg38")
+EAGLE_BIN         = config.get("eagle_bin",         "tools/Eagle_v2.4.1/eagle")
+
+DATASET = config.get('dataset', "scWGS_scRNA")
+dataset = DATASET
+
+# ---------------------------------------------------------------------------
+# Mode-specific configuration
+# ---------------------------------------------------------------------------
+
+FILE_PREFIX = config.get("scWGS_scRNA_prefix", "")
+
+if MODE == "bam":
+    # ---- BAM mode ----
+    CELL_RECORD_LIST = config["cellname_celltype_scWGS_scRNA_tup_list"]
+    assert len(CELL_RECORD_LIST) > 0, "config['cellname_celltype_scWGS_scRNA_tup_list'] must be a non-empty list"
+    for idx, rec in enumerate(CELL_RECORD_LIST):
+        assert len(rec) == 4, (
+            f"Each element of cellname_celltype_scWGS_scRNA_tup_list must have exactly 4 elements "
+            f"[cell_id, celltype, scWGS_bam, scRNA_bam], but element {idx} has {len(rec)}"
+        )
+
+    _all_ids = [rec[0] for rec in CELL_RECORD_LIST]
+    assert len(_all_ids) == len(set(_all_ids)), "Duplicate cell IDs detected"
+
+    # Split into tumor vs reference based on celltype
+    ALL_CELL_IDS = []
+    REF_CELL_IDS = []
+    TUM_CELL_IDS = []
+    ALL_SCWGS_BAM_OF = {}   # reference scWGS BAMs
+    REF_SCWGS_BAM_OF = {}   # reference scWGS BAMs
+    TUM_SCWGS_BAM_OF = {}       # tumor scWGS BAMs
+    ALL_SCRNA_BAM_OF = {}   # reference scRNA BAMs
+    REF_SCRNA_BAM_OF = {}   # reference scRNA BAMs
+    TUM_SCRNA_BAM_OF = {}       # tumor scRNA BAMs
+    
+    for rec in CELL_RECORD_LIST:
+        cid, celltype, wgs_bam, rna_bam = rec[0], rec[1], rec[2], rec[3]
+        if True:
+            ALL_CELL_IDS.append(cid)
+            ALL_SCWGS_BAM_OF[cid] = FILE_PREFIX + wgs_bam
+            ALL_SCRNA_BAM_OF[cid] = FILE_PREFIX + rna_bam
+        if _is_ref_celltype(celltype):
+            REF_CELL_IDS.append(cid)
+            REF_SCWGS_BAM_OF[cid] = FILE_PREFIX + wgs_bam
+            REF_SCRNA_BAM_OF[cid] = FILE_PREFIX + rna_bam
+        else:
+            TUM_CELL_IDS.append(cid)
+            TUM_SCWGS_BAM_OF[cid] = FILE_PREFIX + wgs_bam
+            TUM_SCRNA_BAM_OF[cid] = FILE_PREFIX + rna_bam
+        
+    assert len(TUM_CELL_IDS) > 0, (
+        "At least one tumor/case cell is required. All cells were classified as "
+        "reference/normal based on their celltype."
+    )
+
+    # Matrix file path is not used in BAM mode
+    INPUT_MATRIX_FILE = None
+
+else:
+    # ---- Matrix mode ----
+    _matrix_cfg = config["scWGS_matrix_pairs"]
+    assert len(_matrix_cfg) == 2, (
+        "config['scWGS_matrix_pairs'] must be a 2-element list: "
+        "[list_of_[cell_id, scWGS_bam], matrix_filename]"
+    )
+
+    _cell_bam_pairs = _matrix_cfg[0]
+    INPUT_MATRIX_FILE = _matrix_cfg[1]
+
+    assert isinstance(_cell_bam_pairs, list) and len(_cell_bam_pairs) > 0, (
+        "First element of scWGS_matrix_pairs must be a non-empty list of "
+        "[cell_id, scWGS_bam] pairs."
+    )
+    assert isinstance(INPUT_MATRIX_FILE, str) and len(INPUT_MATRIX_FILE) > 0, (
+        "Second element of scWGS_matrix_pairs must be a non-empty matrix file path."
+    )
+
+    for idx, pair in enumerate(_cell_bam_pairs):
+        assert len(pair) == 2, (
+            f"Each element of the cell/BAM list must have exactly 2 elements "
+            f"[cell_id, scWGS_bam], but element {idx} has {len(pair)}"
+        )
+
+    ALL_CELL_IDS = [str(p[0]) for p in _cell_bam_pairs]
+    REF_CELL_IDS = [str(p[0]) for p in _cell_bam_pairs if _is_ref_celltype(p[1])]
+    TUM_CELL_IDS = [str(p[0]) for p in _cell_bam_pairs if not _is_ref_celltype(p[1])]
+    assert len(ALL_CELL_IDS) == len(set(ALL_CELL_IDS)), (
+        "Duplicate cell IDs detected in scWGS_matrix_pairs"
+    )
+
+    ALL_SCWGS_BAM_OF = {str(p[0]): (FILE_PREFIX + p[1]) for p in _cell_bam_pairs}
+    REF_SCWGS_BAM_OF = {str(p[0]): (FILE_PREFIX + p[1]) for p in _cell_bam_pairs if _is_ref_celltype(p[1])}
+    TUM_SCWGS_BAM_OF = {str(p[0]): (FILE_PREFIX + p[1]) for p in _cell_bam_pairs if not _is_ref_celltype(p[1])}
+
+    ALL_SCRNA_BAM_OF = {}
+    REF_SCRNA_BAM_OF = {}
+    TUM_SCRNA_BAM_OF = {}
+    
+HAS_REF_CELLS = len(REF_CELL_IDS) > 0
+
+# ---------------------------------------------------------------------------
+# Wildcard constraints
+# ---------------------------------------------------------------------------
+
+wildcard_constraints:
+    cell = "[A-Za-z0-9_-]+",
+
+# ---------------------------------------------------------------------------
+# Default target
+# ---------------------------------------------------------------------------
+
+def _default_targets():
+    targets = []
+    targets.append(f"results/output_{DATASET}/evaluation/evaluation_copykat_without_preclassified_cells.tsv")
+    targets.append(f"results/output_{DATASET}/evaluation/evaluation_scevan_without_preclassified_cells.tsv")
+    if HAS_REF_CELLS:
+        targets.append(f"results/output_{DATASET}/evaluation/evaluation_infercnv_hg19.tsv")
+        targets.append(f"results/output_{DATASET}/evaluation/evaluation_infercnv_with_preclassified_cells.tsv")
+        targets.append(f"results/output_{DATASET}/evaluation/evaluation_copykat_with_preclassified_cells.tsv")
+        targets.append(f"results/output_{DATASET}/evaluation/evaluation_scevan_with_preclassified_cells.tsv")
+        targets.append(f"results/output_{DATASET}/evaluation/evaluation_conicsmat_with_preclassified_cells.tsv")
+        if MODE == "bam":
+            targets.append(f"results/output_{DATASET}/evaluation/evaluation_casper_with_preclassified_cells.tsv")
+            targets.append(f"results/output_{DATASET}/evaluation/evaluation_numbat_with_preclassified_cells.tsv")
+    return targets
+
+rule all:
+    input:
+        _default_targets()
+
+
+# ==============================================================================
+# STEP 1: Generate ground truth from scWGS via Ginkgo, then liftover to GRCh38
+# ==============================================================================
+
+rule scwgs_bam_to_bed:
+    input:
+        bam = lambda wc: ALL_SCWGS_BAM_OF[wc.cell]
+    output:
+        bed = f"results/ginkgo_{dataset}/truth_calls/{{cell}}.bed"
+        # the keyword "bed" should only appear at the end of the bed file because this keyword is used as the separator token in awk
+        # https://github.com/robertaboukhalil/ginkgo/blob/d7c779027f64fd22efe733d29be8b551c3e94f72/cli/ginkgo.sh#L137
+    log:
+        "logs/scwgs_bam_to_bed_{cell}.log"
+    benchmark:
+        "benchmarks/scwgs_bam_to_bed_{cell}.txt"
+    threads: 1
+    resources:
+        mem_mb = 4000
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p $(dirname {output.bed})
+        bedtools bamtobed -i {input.bam} > {output.bed} 2>{log}
+        """
+
+rule run_ginkgo:
+    input:
+        truth_calls = expand(f"results/ginkgo_{dataset}/truth_calls/{{cell}}.bed", cell=ALL_CELL_IDS)
+    output:
+        segcopy = f"results/ginkgo_{dataset}/output/SegCopy"
+    log:
+        "logs/run_ginkgo.log"
+    benchmark:
+        "benchmarks/run_ginkgo.txt"
+    threads: 1
+    resources:
+        mem_mb = 16000
+    params:
+        ginkgo_sh = GINKGO_SH,
+        bed_dir = f"results/ginkgo_{dataset}/truth_calls",
+        genome = GINKGO_GENOME,
+        binning = GINKGO_BINNING
+    shell:
+        r"""
+        set -euo pipefail
+        mkdir -p $(dirname {output.segcopy})
+        conda run -n ginkgo bash {params.ginkgo_sh} \
+            --input $(realpath {params.bed_dir})/ \
+            --genome {params.genome} \
+            --binning {params.binning} \
+            2>&1 | tee {log}
+        cp {params.bed_dir}/SegCopy {output.segcopy}
+        test -f {output.segcopy} || {{ echo "ERROR: Ginkgo did not produce SegCopy" >&2; exit 1; }}
+        """
+
+rule liftover_ginkgo_results:
+    input:
+        segcopy = f"results/ginkgo_{dataset}/output/SegCopy"
+    output:
+        segcopy_grch38 = f"results/ginkgo_{dataset}/output/SegCopy_grch38.tsv",
+        unmapped = f"results/ginkgo_{dataset}/output/SegCopy_unmapped.bed"
+    log:
+        "logs/liftover_ginkgo.log"
+    benchmark:
+        "benchmarks/liftover_ginkgo.txt"
+    threads: 1
+    resources:
+        mem_mb = 4000
+    params:
+        chain = LIFTOVER_CHAIN,
+        liftover_bin = LIFTOVER_BIN
+    shell:
+        r"""
+        set -euo pipefail
+        exec 2>{log}
+
+        TMPDIR=$(mktemp -d)
+        trap 'rm -rf "$TMPDIR"' EXIT
+
+        head -n1 {input.segcopy} > "$TMPDIR/header.txt"
+
+        tail -n+2 {input.segcopy} | awk -F'\t' 'BEGIN{{OFS="\t"}} {{
+            chr = $1;
+            if (chr !~ /^chr/) chr = "chr" chr;
+            print chr, $2, $3, NR;
+        }}' > "$TMPDIR/input.bed"
+
+        tail -n+2 {input.segcopy} | cut -f4- > "$TMPDIR/data_cols.tsv"
+
+        {params.liftover_bin} \
+            "$TMPDIR/input.bed" \
+            {params.chain} \
+            "$TMPDIR/lifted.bed" \
+            {output.unmapped}
+
+        python3 -c "
+import sys
+
+data = {{}}
+with open('$TMPDIR/data_cols.tsv') as f:
+    for i, line in enumerate(f, 1):
+        data[i] = line.rstrip('\n')
+
+with open('$TMPDIR/lifted.bed') as fin, open('$TMPDIR/body.tsv', 'w') as fout:
+    for line in fin:
+        parts = line.rstrip('\n').split('\t')
+        chrom, start, end, orig_nr = parts[0], parts[1], parts[2], int(parts[3])
+        if orig_nr in data:
+            fout.write(f'{{chrom}}\t{{start}}\t{{end}}\t{{data[orig_nr]}}\n')
+"
+
+        head -n1 {input.segcopy} > {output.segcopy_grch38}
+        sort -k1,1V -k2,2n "$TMPDIR/body.tsv" >> {output.segcopy_grch38}
+        """
+
+rule format_ginkgo_ground_truth:
+    input:
+        segcopy_hg19 = f"results/ginkgo_{dataset}/output/SegCopy",
+        segcopy_grch38 = f"results/ginkgo_{dataset}/output/SegCopy_grch38.tsv",
+    output:
+        ground_truth_hg19 = f"data/{dataset}_ginkgo_groundtruth/wgs_results_formated_hg19.csv",
+        ground_truth = f"data/{dataset}_ginkgo_groundtruth/wgs_results_formated.csv",
+    log:
+        f"logs/format_ginkgo_ground_truth_{dataset}.log"
+    benchmark:
+        f"benchmarks/format_ginkgo_ground_truth_{dataset}.txt"
+    threads: 1
+    resources:
+        mem_mb = 4000
+    run:
+        shell(f'cp {input.segcopy_hg19} {output.ground_truth_hg19}')
+        shell(f'cp {input.segcopy_grch38} {output.ground_truth}')
+
+rule format_ginkgo_ground_truth_percell:
+    input:
+        segcopy_grch38 = f"results/ginkgo_{dataset}/output/SegCopy_grch38.tsv"
+    output:
+        percell_gt = f"data/{dataset}_ginkgo_groundtruth/cnvs_per_cell_filtered.tsv"
+    log:
+        f"logs/format_ginkgo_percell_gt_{dataset}.log"
+    threads: 1
+    resources:
+        mem_mb = 4000
+    run:
+        import csv, os
+        os.makedirs(os.path.dirname(output.percell_gt), exist_ok=True)
+        with open(input.segcopy_grch38) as fin, \
+             open(output.percell_gt, "w", newline="") as fout:
+            reader = csv.reader(fin, delimiter="\t")
+            header = next(reader)
+            cell_names = header[3:]
+            writer = csv.writer(fout, delimiter="\t")
+            writer.writerow(["chr", "start", "end", "cell", "copy_number"])
+            for row in reader:
+                if len(row) < 4:
+                    continue
+                chrom, start, end = row[0], row[1], row[2]
+                for i, cn in enumerate(row[3:]):
+                    if i < len(cell_names):
+                        try:
+                            cn_val = float(cn)
+                            writer.writerow([chrom, start, end, cell_names[i], f"{cn_val:.2f}"])
+                        except ValueError:
+                            pass
+
+
+# ==============================================================================
+# STEP 2: Prepare inputs for CNV callers
+# ==============================================================================
+
+if MODE == "bam":
+
+    rule index_scrna_bam:
+        input:
+            bam = lambda wc: ALL_SCRNA_BAM_OF[wc.cell]
+        output:
+            bai = f"results/output_{dataset}/bam_indices/{{cell}}.bam.bai"
+        log:
+            f"logs/index_scrna_bam_{dataset}_{{cell}}.log"
+        threads: 1
+        resources:
+            mem_mb = 4000
+        shell:
+            r"""
+            set -euo pipefail
+            BAM_PATH=$(readlink -f {input.bam})
+            samtools index "$BAM_PATH" {output.bai} 2>{log}
+            """
+
+    rule generate_count_matrix:
+        input:
+            bams = [ALL_SCRNA_BAM_OF[c] for c in ALL_CELL_IDS],
+            gtf = GTF_GRCH38
+        output:
+            count_matrix = f"data/input_{dataset}/count_matrix.txt", # with the original header defined by https://github.com/colomemaria/benchmark_scrnaseq_cnv_callers
+            count_matrix_with_hdr = f"data/input_{dataset}/count_matrix.with_fixed_header.txt", # with header revised for human readability
+            summary = f"data/input_{dataset}/featurecounts_summary.txt"
+        log:
+            f"logs/generate_count_matrix_{dataset}.log"
+        benchmark:
+            f"benchmarks/generate_count_matrix_{dataset}.txt"
+        threads: 4
+        resources:
+            mem_mb = 16000
+        run:
+            import subprocess, sys, os
+            os.makedirs(os.path.dirname(output.count_matrix), exist_ok=True)
+
+            bam_list = input.bams
+            tmpout = output.count_matrix + ".fc_raw"
+
+            cmd = [
+                "featureCounts",
+                "-a", input.gtf,
+                "-o", tmpout,
+                "-T", str(threads),
+                "-t", "gene",
+                "-g", "gene_name",
+                "--primary",
+                "--ignoreDup",
+                "-p"
+            ] + list(bam_list)
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(result.stderr, file=sys.stderr)
+                sys.exit(result.returncode)
+
+            cell_ids = list(ALL_CELL_IDS)
+            with open(tmpout) as fin, open(output.count_matrix, "w") as fout, open(output.count_matrix_with_hdr, "w") as fout_header:
+                for line in fin:
+                    if line.startswith("#"):
+                        continue
+                    parts = line.rstrip("\n").split("\t")
+                    if parts[0] == "Geneid":
+                        fout_header.write("gene\t" + "\t".join(cell_ids) + "\n")
+                        fout.write("V1\t" + "\t".join(cell_ids) + "\n") # The V1 denotes GeneID
+                    else:
+                        gene = parts[0]
+                        counts = parts[6:]
+                        record = gene + "\t" + "\t".join(counts) + "\n"
+                        fout_header.write(record)
+                        fout.write(record)
+
+            with open(output.summary, "w") as f:
+                f.write(f"Cells: {len(cell_ids)}\n")
+                f.write(f"BAMs: {len(bam_list)}\n")
+
+            os.remove(tmpout)
+            if os.path.exists(tmpout + ".summary"):
+                os.rename(tmpout + ".summary", output.summary)
+
+else:
+
+    rule prepare_count_matrix_from_file:
+        input:
+            raw_matrix = INPUT_MATRIX_FILE
+        output:
+            count_matrix = f"data/input_{dataset}/count_matrix.txt",
+            summary = f"data/input_{dataset}/matrix_import_summary.txt"
+        log:
+            f"logs/prepare_count_matrix_from_file_{dataset}.log"
+        benchmark:
+            f"benchmarks/prepare_count_matrix_from_file_{dataset}.txt"
+        threads: 1
+        resources:
+            mem_mb = 8000
+        params:
+            required_cell_ids = ";".join(ALL_CELL_IDS)
+        run:
+            import os, sys, csv
+
+            os.makedirs(os.path.dirname(output.count_matrix), exist_ok=True)
+
+            required = set(params.required_cell_ids.split(";")) if params.required_cell_ids else set()
+
+            with open(log[0], "w") as logf:
+                logf.write(f"Input matrix: {input.raw_matrix}\n")
+                logf.write(f"Required cell IDs ({len(required)}): {sorted(required)}\n")
+
+                with open(input.raw_matrix) as fin:
+                    header_line = fin.readline().rstrip("\n")
+
+                if "\t" in header_line:
+                    delim = "\t"
+                else:
+                    delim = None
+
+                header_fields = header_line.split(delim)
+                gene_col_name = header_fields[0]
+                matrix_cell_ids = header_fields[1:]
+
+                logf.write(f"Matrix columns ({len(matrix_cell_ids)}): {matrix_cell_ids[:20]}...\n")
+
+                matrix_cell_set = set(matrix_cell_ids)
+                missing = required - matrix_cell_set
+                if missing:
+                    msg = (
+                        f"ERROR: The following cell IDs from scWGS_matrix_pairs "
+                        f"are not found as columns in the matrix file: {sorted(missing)}"
+                    )
+                    logf.write(msg + "\n")
+                    print(msg, file=sys.stderr)
+                    sys.exit(1)
+
+                if required:
+                    keep_indices = [0]
+                    for i, cid in enumerate(matrix_cell_ids):
+                        if cid in required:
+                            keep_indices.append(i + 1)
+                    kept_cell_ids = [matrix_cell_ids[i - 1] for i in keep_indices[1:]]
+                else:
+                    keep_indices = list(range(len(header_fields)))
+                    kept_cell_ids = matrix_cell_ids
+
+                logf.write(f"Keeping {len(kept_cell_ids)} cell columns\n")
+
+                n_genes = 0
+                with open(input.raw_matrix) as fin, \
+                     open(output.count_matrix, "w") as fout:
+                    for line_no, line in enumerate(fin):
+                        fields = line.rstrip("\n").split(delim)
+                        selected = [fields[i] for i in keep_indices if i < len(fields)]
+                        fout.write("\t".join(selected) + "\n")
+                        if line_no > 0:
+                            n_genes += 1
+
+                logf.write(f"Wrote {n_genes} genes x {len(kept_cell_ids)} cells\n")
+
+            with open(output.summary, "w") as f:
+                f.write(f"Mode: matrix_import\n")
+                f.write(f"Source: {input.raw_matrix}\n")
+                f.write(f"Cells kept: {len(kept_cell_ids)}\n")
+                f.write(f"Genes: {n_genes}\n")
+                f.write(f"Tumor cells: {len(TUM_CELL_IDS)}\n")
+                f.write(f"Reference cells: {len(REF_CELL_IDS)}\n")
+
+
+rule create_sample_annotation:
+    output:
+        annot = f"data/input_{dataset}/sample_annotation.txt"
+    log:
+        f"logs/create_sample_annotation_{dataset}.log"
+    threads: 1
+    run:
+        import os
+        os.makedirs(os.path.dirname(output.annot), exist_ok=True)
+        with open(output.annot, "w") as f:
+            for cid in ALL_CELL_IDS:
+                cell_type = ('tumor' if cid in TUM_CELL_IDS else 'reference')
+                f.write(f"{cid}\t{cell_type}\n")
+
+rule create_ref_groups:
+    output:
+        ref_groups = f"data/input_{dataset}/ref_groups.txt"
+    log:
+        f"logs/create_ref_groups_{dataset}.log"
+    threads: 1
+    run:
+        import os
+        os.makedirs(os.path.dirname(output.ref_groups), exist_ok=True)
+        with open(output.ref_groups, "w") as f:
+            #if HAS_REF_CELLS:
+            f.write("ref_groups\nreference\n")
+            #for ref_ct in _REF_CELLTYPES:
+            #    ref_ct1 = ref_ct[:1].upper() + ref_ct[1:]
+            #    f.write(f"{ref_ct1}\n")
+            #    ref_ct2 = ref_ct[:1].lower() + ref_ct[1:]
+            #    f.write(f"{ref_ct2}\n")
+            #f.write('HUVEC\n') # HUVEC is normal diploid
+            #for ref_cell_id in REF_CELL_IDS: f.write(f"{ref_cell_id}\n")
+            #else:
+            #    pass
+
+# ==============================================================================
+# STEP 2 (continued): Run each benchmarked CNV caller
+# ==============================================================================
+
+# ==============================================================================
+# InferCNV: https://github.com/broadinstitute/infercnv
+#   requires ref cell IDs for normalization
+# ==============================================================================
+
+if HAS_REF_CELLS:
+
+    rule run_infercnv_with_given_refs:
+        input:
+            matrix = f"data/input_{dataset}/count_matrix.txt",
+            annot = f"data/input_{dataset}/sample_annotation.txt",
+            ref_groups = f"data/input_{dataset}/ref_groups.txt",
+            gene_pos = GENE_POS_FILE
+        output:
+            cnv_file = f"results/output_{dataset}/infercnv_known_ref/infercnv.observations.txt",
+            states_file = f"results/output_{dataset}/infercnv_known_ref/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt"
+        log:
+            f"logs/infercnv_{dataset}.log"
+        benchmark:
+            f"benchmarks/infercnv_{dataset}_benchmark.txt"
+        threads: 1
+        resources:
+            mem_mb = 32000
+        params:
+            time = "48:00:00",
+            expr_filter = "0.1"
+        script:
+            "scripts/inferCNV.R"
+
+    rule run_infercnv_with_ref_using_hg19:
+        input:
+            matrix = f"data/input_{dataset}/count_matrix.txt",
+            annot = f"data/input_{dataset}/sample_annotation.txt",
+            ref_groups = f"data/input_{dataset}/ref_groups.txt",
+            gene_pos = GENE_POS_FILE_HG19,
+        output:
+            cnv_file = f"results/output_{dataset}/infercnv_known_ref_hg19/infercnv.observations.txt",
+            states_file = f"results/output_{dataset}/infercnv_known_ref_hg19/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt"
+        log:
+            f"logs/infercnv_{dataset}_hg19.log"
+        benchmark:
+            f"benchmarks/infercnv_{dataset}_hg19_benchmark.txt"
+        threads: 1
+        resources:
+            mem_mb = 32000
+        params:
+            time = "48:00:00",
+            expr_filter = "0.1"
+        script:
+            "scripts/inferCNV.R"
+
+# ==============================================================================
+# CopyKat: https://github.com/navinlabcode/copykat
+# ==============================================================================
+
+if 1:
+
+    rule run_copykat_without_given_refs:
+        input:
+            matrix = f"data/input_{dataset}/count_matrix.txt"
+        output:
+            cnv_file = f"results/output_{dataset}/copykat_unknown_ref/{dataset}_copykat_CNA_results.txt",
+            pred_file = f"results/output_{dataset}/copykat_unknown_ref/{dataset}_copykat_prediction.txt",
+            cnv_per_cell = f"results/output_{dataset}/copykat_unknown_ref/{dataset}_copykat_CNA_raw_results_gene_by_cell.txt"
+        log:
+            f"logs/copykat_without_preclassified_cells_{dataset}.log"
+        benchmark:
+            f"benchmarks/copykat_without_preclassified_cells_{dataset}_benchmark.txt"
+        threads: 1
+        resources:
+            mem_mb = 32000
+        params:
+            time = "24:00:00"
+        script:
+            "scripts/copykat.R"
+
+if HAS_REF_CELLS:
+
+    rule run_copykat_with_given_refs:
+        input:
+            matrix = f"data/input_{dataset}/count_matrix.txt",
+            annot = f"data/input_{dataset}/sample_annotation.txt",
+            ref_groups = f"data/input_{dataset}/ref_groups.txt"
+        output:
+            cnv_file = f"results/output_{dataset}/copykat_known_ref/{dataset}_copykat_CNA_results.txt",
+            pred_file = f"results/output_{dataset}/copykat_known_ref/{dataset}_copykat_prediction.txt",
+            cnv_per_cell = f"results/output_{dataset}/copykat_known_ref/{dataset}_copykat_CNA_raw_results_gene_by_cell.txt"
+        log:
+            f"logs/copykat_{dataset}.log"
+        benchmark:
+            f"benchmarks/copykat_{dataset}_benchmark.txt"
+        threads: 1
+        resources:
+            mem_mb = 32000
+        params:
+            time = "24:00:00"
+        script:
+            "scripts/copykat.R"
+
+# ==============================================================================
+# SCEVAN: https://github.com/AntonioDeFalco/SCEVAN
+# ==============================================================================
+
+if 1:
+
+    rule run_SCEVAN_without_given_refs:
+        input:
+            matrix = f"data/input_{dataset}/count_matrix.txt"
+        output:
+            cnv_file = f"results/output_{dataset}/scevan_unknown_ref/output/{dataset}_subclone1_CN.seg",
+            pred_file = f"results/output_{dataset}/scevan_unknown_ref/output/{dataset}_scevan_prediction.txt",
+            expr = f"results/output_{dataset}/scevan_unknown_ref/output/{dataset}_CNAmtxSubclones.RData",
+            gene_pos = f"results/output_{dataset}/scevan_unknown_ref/output/{dataset}_count_mtx_annot.RData",
+            log2file = f"results/output_{dataset}/scevan_unknown_ref/output/{dataset}_CNAmtx.RData",
+            # annofile = f"results/output_{dataset}/scevan_unknown_ref/output/{dataset}_count_mtx_annot.RData",
+        log:
+            f"logs/scevan_without_preclassified_cells_{dataset}.log"
+        benchmark:
+            f"benchmarks/scevan_without_preclassified_cells_{dataset}_benchmark.txt"
+        threads: 1
+        resources:
+            mem_mb = 32000
+        params:
+            time = "24:00:00",
+            find_clones = "TRUE"
+        script:
+            "scripts/scevan.R"
+
+if HAS_REF_CELLS:
+ 
+    rule run_SCEVAN_with_given_refs:
+        input:
+            matrix = f"data/input_{dataset}/count_matrix.txt",
+            annot = f"data/input_{dataset}/sample_annotation.txt",
+            ref_groups = f"data/input_{dataset}/ref_groups.txt",
+        output:
+            cnv_file = f"results/output_{dataset}/scevan_known_ref/output/{dataset}_subclone1_CN.seg",
+            pred_file = f"results/output_{dataset}/scevan_known_ref/output/{dataset}_scevan_prediction.txt",
+            expr = f"results/output_{dataset}/scevan_known_ref/output/{dataset}_CNAmtxSubclones.RData",
+            gene_pos = f"results/output_{dataset}/scevan_known_ref/output/{dataset}_count_mtx_annot.RData",
+            log2file = f"results/output_{dataset}/scevan_known_ref/output/{dataset}_CNAmtx.RData",
+            # annofile = f"results/output_{dataset}/scevan_known_ref/output/{dataset}_count_mtx_annot.RData",
+        log:
+            f"logs/scevan_{dataset}.log"
+        benchmark:
+            f"benchmarks/scevan_{dataset}_benchmark.txt"
+        threads: 1
+        resources:
+            mem_mb = 32000
+        params:
+            time = "24:00:00",
+            find_clones = "TRUE"
+        script:
+            "scripts/scevan.R"
+
+# ==============================================================================
+# CONICSmat: https://github.com/plaisier-lab/CONICSmat
+# ==============================================================================
+
+rule CONICSmat_import_data:
+    input:
+        expression_df = f"data/input_{dataset}/count_matrix.txt",
+        gtf = GTF_GRCH38,
+    output:
+        gene_pos_df = f"results/output_{dataset}/gene_annotation_conicsmat_{dataset}.tsv"
+    log:
+        f"logs/CONICSmat_import_{dataset}.log"
+    benchmark:
+        f"benchmarks/CONICSmat_import_{dataset}_benchmark.txt"
+    threads: 1
+    resources:
+        mem_mb = 32000
+    params:
+        time = "24:00:00"
+    script:
+        "scripts/CONICSmat_import_data_offline.R"
+
+if 1:
+    rule run_CONICSmat_without_given_refs:
+        input:
+            expression_df = f"data/input_{dataset}/count_matrix.txt",
+            chrom_pos_df = CHROM_ARM_POS,
+            gene_pos_df = f"results/output_{dataset}/gene_annotation_conicsmat_{dataset}.tsv",
+        output:
+            filtering_dims = f"results/output_{dataset}/CONICSmat_unknown_ref/{dataset}_filtering_dims.tsv",
+            cnv_types = f"results/output_{dataset}/CONICSmat_unknown_ref/cnv_types.tsv",
+            tumor_pred = f"results/output_{dataset}/CONICSmat_unknown_ref/tumor_pred.tsv",
+            cnv_binary_mat = f"results/output_{dataset}/CONICSmat_unknown_ref/cnv_binary.tsv",
+            p_val = f"results/output_{dataset}/CONICSmat_unknown_ref/cnv_pval.tsv",
+            post_prob = f"results/output_{dataset}/CONICSmat_unknown_ref/cnv_posterior_probs.tsv",
+            boxplot_path = f"results/output_{dataset}/CONICSmat_unknown_ref/{dataset}_boxplot.png",
+            heatmap_expr_path = f"results/output_{dataset}/CONICSmat_unknown_ref/{dataset}_heatmap_expr.png",
+            histo_path = f"results/output_{dataset}/CONICSmat_unknown_ref/{dataset}_histogram.png"
+        log:
+            f"logs/CONICSmat_{dataset}.log"
+        benchmark:
+            f"benchmarks/CONICSmat_{dataset}_benchmark.txt"
+        threads: 1
+        resources:
+            mem_mb = 32000
+        params:
+            time = "24:00:00"
+        script:
+            "scripts/CONICSmat.R"
+
+if HAS_REF_CELLS:
+
+    rule run_CONICSmat_with_given_refs:
+        input:
+            expression_df = f"data/input_{dataset}/count_matrix.txt",
+            chrom_pos_df = CHROM_ARM_POS,
+            gene_pos_df = f"results/output_{dataset}/gene_annotation_conicsmat_{dataset}.tsv",
+            annot = f"data/input_{dataset}/sample_annotation.txt",
+            ref_groups = f"data/input_{dataset}/ref_groups.txt"
+        output:
+            filtering_dims = f"results/output_{dataset}/CONICSmat_known_ref/{dataset}_filtering_dims.tsv",
+            cnv_types = f"results/output_{dataset}/CONICSmat_known_ref/cnv_types.tsv",
+            tumor_pred = f"results/output_{dataset}/CONICSmat_known_ref/tumor_pred.tsv",
+            cnv_binary_mat = f"results/output_{dataset}/CONICSmat_known_ref/cnv_binary.tsv",
+            p_val = f"results/output_{dataset}/CONICSmat_known_ref/cnv_pval.tsv",
+            post_prob = f"results/output_{dataset}/CONICSmat_known_ref/cnv_posterior_probs.tsv",
+            boxplot_path = f"results/output_{dataset}/CONICSmat_known_ref/{dataset}_boxplot.png",
+            heatmap_expr_path = f"results/output_{dataset}/CONICSmat_known_ref/{dataset}_heatmap_expr.png",
+            histo_path = f"results/output_{dataset}/CONICSmat_known_ref/{dataset}_histogram.png"
+        log:
+            f"logs/CONICSmat_{dataset}.log"
+        benchmark:
+            f"benchmarks/CONICSmat_{dataset}_benchmark.txt"
+        threads: 1
+        resources:
+            mem_mb = 32000
+        params:
+            time = "24:00:00"
+        script:
+            "scripts/CONICSmat.R"
+
+# ==============================================================================
+# CaSpER: https://github.com/akdess/CaSpER 
+#   requires scRNA BAM for BAF extraction
+#   requires ref cell IDs for normalization
+# ==============================================================================
+
+if MODE == "bam" and HAS_REF_CELLS:
+
+    rule casper_merge_scrna_bams:
+        input:
+            bams = [ALL_SCRNA_BAM_OF[c] for c in ALL_CELL_IDS]
+        output:
+            merged = f"results/output_{dataset}/casper_known_ref/merged.bam",
+            merged_bai = f"results/output_{dataset}/casper_known_ref/merged.bam.bai"
+        log:
+            f"logs/casper_merge_bams_{dataset}.log"
+        threads: 4
+        resources:
+            mem_mb = 8000
+        shell:
+            r"""
+            set -euo pipefail
+            mkdir -p $(dirname {output.merged})
+            samtools merge -@ {threads} -f {output.merged} {input.bams} 2>{log}
+            samtools index {output.merged} 2>>{log}
+            """
+
+    rule run_BAFextract_casper:
+        input:
+            bam_file = f"results/output_{dataset}/casper_known_ref/merged.bam"
+        output:
+            out_dir = directory(f"results/output_{dataset}/casper_known_ref/{dataset}_bins_BAFExtract"),
+            af      = f"results/output_{dataset}/casper_known_ref/{dataset}_BAFExtract/{dataset}_BAFExtract.af"
+        log:
+            f"logs/casper_preprocess_{dataset}.log"
+        benchmark:
+            f"benchmarks/casper_preprocess_{dataset}_benchmark.txt"
+        threads: 1
+        resources:
+            mem_mb = 24000
+        params:
+            genome_list = BAFEXTRACT_GENOME_LIST,
+            genome      = BAFEXTRACT_GENOME,
+            bafextract  = BAFEXTRACT_BIN
+        shell:
+            r"""
+            set -euo pipefail
+            mkdir -p {output.out_dir}
+            mkdir -p $(dirname {output.af})
+            samtools view {input.bam_file} \
+                | {params.bafextract} -generate_compressed_pileup_per_SAM stdin \
+                    {params.genome_list} {output.out_dir} 50 0 2>{log}
+            {params.bafextract} -get_SNVs_per_pileup \
+                {params.genome_list} {output.out_dir} {params.genome} 20 4 0.1 {output.af} 2>>{log}
+            """
+
+    rule run_casper_gene_annot:
+        input:
+            matrix = f"data/input_{dataset}/count_matrix.txt"
+        output:
+            gene_annot = f"results/output_{dataset}/casper_known_ref/gene_annotation_casper_{dataset}.tsv"
+        params:
+            helper_script = f"{workflow.basedir}/scripts/casper_helpers.R" # Match your helper file name
+        log:
+            f"logs/casper_gene_annot_{dataset}.log"
+        benchmark:
+            f"benchmarks/casper_gene_annot_{dataset}_benchmark.txt"
+        threads: 1
+        resources:
+            mem_mb = 8000
+        script:
+            "scripts/casper_gene_annotations.R"
+
+    rule run_casper_with_given_refs:
+        input:
+            matrix     = f"data/input_{dataset}/count_matrix.txt",
+            annot      = f"data/input_{dataset}/sample_annotation.txt",
+            ref_groups = f"data/input_{dataset}/ref_groups.txt",
+            #gene_annot = f"data/annotations/casper_gene_annotation_GRCh38.tsv",
+            gene_annot = f"results/output_{dataset}/casper_known_ref/gene_annotation_casper_{dataset}.tsv",
+            af         = f"results/output_{dataset}/casper_known_ref/{dataset}_BAFExtract/{dataset}_BAFExtract.af"
+        output:
+            casper_cellmatrix        = f"results/output_{dataset}/casper_known_ref/{dataset}_casper_cell_matrix.tsv",
+            casper_pseudobulk        = f"results/output_{dataset}/casper_known_ref/{dataset}_casper_pseudobulk_aggregate.RDS",
+            casper_clusters          = f"results/output_{dataset}/casper_known_ref/{dataset}_casper_hclust.RDS",
+            casper_plot_density      = f"results/output_{dataset}/casper_known_ref/{dataset}_casper_densities.pdf",
+            casper_plot_large_events = f"results/output_{dataset}/casper_known_ref/{dataset}_casper_large_events.png",
+            casper_plot_heatmap      = f"results/output_{dataset}/casper_known_ref/{dataset}_casper_heatmap.png",
+            casper_plot_baf          = f"results/output_{dataset}/casper_known_ref/{dataset}_casper_baf.png"
+        log:
+            f"logs/casper_{dataset}.log"
+        benchmark:
+            f"benchmarks/casper_{dataset}_benchmark.txt"
+        threads: 1
+        resources:
+            mem_mb = 64000
+        params:
+            segment_gamma = 7,
+            time = "48:00:00"
+        script:
+            "scripts/casper.R"
+
+# ==============================================================================
+# Numbat: https://github.com/kharchenkolab/numbat
+#   requires scRNA BAM for BAF extraction
+# ==============================================================================
+
+if MODE == "bam":
+
+    rule numbat_prepare_bam_list:
+        input:
+            bams = [ALL_SCRNA_BAM_OF[c] for c in ALL_CELL_IDS]
+        output:
+            bam_list   = f"results/output_{dataset}/numbat_prep/list_bam_files_fullpath.txt",
+            cell_names = f"results/output_{dataset}/numbat_prep/matching_sample_names.txt"
+        log:
+            f"logs/numbat_bam_list_{dataset}.log"
+        threads: 1
+        run:
+            import os
+            os.makedirs(os.path.dirname(output.bam_list), exist_ok=True)
+            with open(output.bam_list, "w") as f:
+                for c in ALL_CELL_IDS:
+                    f.write(os.path.abspath(ALL_SCRNA_BAM_OF[c]) + "\n")
+            with open(output.cell_names, "w") as f:
+                for c in ALL_CELL_IDS:
+                    f.write(c + "\n")
+
+    rule numbat_preprocessing:
+        input:
+            bam_list   = f"results/output_{dataset}/numbat_prep/list_bam_files_fullpath.txt",
+            cell_names = f"results/output_{dataset}/numbat_prep/matching_sample_names.txt",
+            snp_vcf    = NUMBAT_SNP_VCF,
+            eagle_gmap = NUMBAT_EAGLE_GMAP
+        output:
+            df_allele = f"results/output_{dataset}/numbat_prep/{dataset}_allele_counts.tsv.gz"
+        log:
+            f"logs/numbat_preprocessing_{dataset}.log"
+        benchmark:
+            f"benchmarks/numbat_preprocessing_{dataset}_benchmark.txt"
+        threads: 4
+        resources:
+            mem_mb = 32000
+        params:
+            time      = "24:00:00",
+            ref_panel = NUMBAT_REF_PANEL,
+            eagle_bin = EAGLE_BIN,
+            out_dir   = f"results/output_{dataset}/numbat_prep/",
+            label     = dataset
+        shell:
+            r"""
+            set -euo pipefail
+            Rscript {workflow.basedir}/scripts/pileup_and_phase.R \
+                --label {params.label} \
+                --samples {params.label} \
+                --bams {input.bam_list} \
+                --barcodes {input.cell_names} \
+                --outdir {params.out_dir} \
+                --gmap {input.eagle_gmap} \
+                --eagle {params.eagle_bin} \
+                --snpvcf {input.snp_vcf} \
+                --paneldir {params.ref_panel} \
+                --smartseq \
+                --ncores {threads} > {log} 2>&1
+            """
+
+    rule run_numbat_without_given_refs:
+        input:
+            count_mat = "data/input_{dataset}/count_matrix.txt",
+            df_allele = f"results/output_{dataset}/numbat_prep/{dataset}_allele_counts.tsv.gz"
+        output:
+            cnv_expr = "results/output_{dataset}/numbat_unknown_ref/gexp_roll_wide.tsv.gz"
+        log:
+            "logs/numbat_without_preclassified_cells_{dataset}.log"
+        benchmark:
+            "benchmarks/numbat_without_preclassified_cells_{dataset}_benchmark.txt"
+        threads: 1
+        resources:
+            mem_mb = 32000
+        params:
+            time = "24:00:00"
+        script:
+            "scripts/numbat_woref.R"
+
+if MODE == "bam" and HAS_REF_CELLS:
+
+    rule run_numbat_with_given_refs:
+        input:
+            # <FIX URL=https://chat.deepseek.com/a/chat/s/3b809dd5-1e42-4e56-a19b-507eabe4cd31> with_header </FIX>
+            count_mat  = f"data/input_{dataset}/count_matrix.txt",
+            annot      = f"data/input_{dataset}/sample_annotation.txt",
+            ref_groups = f"data/input_{dataset}/ref_groups.txt",
+            df_allele  = f"results/output_{dataset}/numbat_prep/{dataset}_allele_counts.tsv.gz"
+        output:
+            cnv_expr = f"results/output_{dataset}/numbat_known_ref/gexp_roll_wide.tsv.gz"
+        log:
+            f"logs/numbat_{dataset}.log"
+        benchmark:
+            f"benchmarks/numbat_{dataset}_benchmark.txt"
+        threads: 1
+        resources:
+            mem_mb = 32000
+        params:
+            time      = "48:00:00",
+            gamma     = "5",
+            min_LLR   = "5",
+            min_cells = "10"
+        script:
+            "scripts/numbat.R"
+
+
+# ==============================================================================
+# STEP 3: Evaluate CNV calling results against Ginkgo ground truth
+# ==============================================================================
+
+# Evaluate InferCNV (requiring ref cells IDs)
+
+if HAS_REF_CELLS:
+
+    rule evaluate_infercnv_with_given_refs:
+        input:
+            ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
+            infercnv_cnv = f"results/output_{DATASET}/infercnv_known_ref/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt",
+            infercnv_expr = f"results/output_{DATASET}/infercnv_known_ref/infercnv.observations.txt",
+            gene_pos = GENE_POS_FILE,
+            samp_annot = f"data/input_{DATASET}/sample_annotation.txt",
+        output:
+            results = f"results/output_{DATASET}/evaluation/evaluation_infercnv_with_preclassified_cells.tsv"
+        log:
+            f"logs/evaluate_infercnv_with_preclassified_cells_{DATASET}.log"
+        benchmark:
+            f"benchmarks/evaluate_infercnv_with_preclassified_cells_{DATASET}.txt"
+        threads: 1
+        resources:
+            mem_mb = 16000
+        shell:
+            r"""
+            set -euo pipefail
+            python3 {workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py \
+                --ground-truth {input.ground_truth} \
+                --caller-result {input.infercnv_cnv} \
+                --caller-name infercnv \
+                --sample-annotation {input.samp_annot} \
+                --gene-pos {input.gene_pos} \
+                --output {output.results} \
+                2>{log}
+            """
+
+    rule evaluate_infercnv_with_ref_using_hg19:
+        input:
+            ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated_hg19.csv",
+            infercnv_cnv = f"results/output_{DATASET}/infercnv_known_ref_hg19/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt",
+            infercnv_expr = f"results/output_{DATASET}/infercnv_known_ref_hg19/infercnv.observations.txt",
+            gene_pos = GENE_POS_FILE_HG19,
+            samp_annot = f"data/input_{DATASET}/sample_annotation.txt",
+        output:
+            results = f"results/output_{DATASET}/evaluation/evaluation_infercnv_hg19.tsv"
+        log:
+            f"logs/evaluate_infercnv_with_preclassified_cells_{DATASET}_hg19.log"
+        benchmark:
+            f"benchmarks/evaluate_infercnv_with_preclassified_cells_{DATASET}_hg19.txt"
+        threads: 1
+        resources:
+            mem_mb = 16000
+        shell:
+            r"""
+            set -euo pipefail
+            python3 {workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py \
+                --ground-truth {input.ground_truth} \
+                --caller-result {input.infercnv_cnv} \
+                --caller-name infercnv_hg19 \
+                --sample-annotation {input.samp_annot} \
+                --gene-pos {input.gene_pos} \
+                --output {output.results} \
+                2>{log}
+            """
+
+# Evaluate CopyKat
+
+if 1:
+    rule evaluate_copykat_without_given_refs:
+        input:
+            ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
+            copykat = f"results/output_{DATASET}/copykat_unknown_ref/{DATASET}_copykat_CNA_raw_results_gene_by_cell.txt",
+            gene_pos = GENE_POS_FILE,
+            samp_annot = f"data/input_{DATASET}/sample_annotation.txt",
+        output:
+            results = f"results/output_{DATASET}/evaluation/evaluation_copykat_without_preclassified_cells.tsv"
+        log:
+            f"logs/evaluate_copykat_without_preclassified_cells_{DATASET}.log"
+        benchmark:
+            f"benchmarks/evaluate_copykat_without_preclassified_cells_{DATASET}.txt"
+        threads: 1
+        resources:
+            mem_mb = 16000
+        run:
+            import subprocess, sys, os
+            os.makedirs(os.path.dirname(output.results), exist_ok=True)
+            shell(
+                r"""
+                set -euo pipefail
+                python3 {workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py \
+                    --ground-truth {input.ground_truth} \
+                    --caller-result {input.copykat} \
+                    --caller-name copykat_predict \
+                    --gene-pos {input.gene_pos} \
+                    --sample-annotation {input.samp_annot} \
+                    --output {output.results} \
+                    2>{log}
+                """
+            )
+
+if HAS_REF_CELLS:
+
+    rule evaluate_copykat_with_given_refs:
+        input:
+            ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
+            copykat = f"results/output_{DATASET}/copykat_known_ref/{DATASET}_copykat_CNA_raw_results_gene_by_cell.txt",
+            gene_pos = GENE_POS_FILE,
+            samp_annot = f"data/input_{DATASET}/sample_annotation.txt",
+        output:
+            results = f"results/output_{DATASET}/evaluation/evaluation_copykat_with_preclassified_cells.tsv"
+        log:
+            f"logs/evaluate_copykat_with_preclassified_cells_{DATASET}.log"
+        benchmark:
+            f"benchmarks/evaluate_copykat_with_preclassified_cells_{DATASET}.txt"
+        threads: 1
+        resources:
+            mem_mb = 16000
+        shell:
+            r"""
+            set -euo pipefail
+            python3 {workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py \
+                --ground-truth {input.ground_truth} \
+                --caller-result {input.copykat} \
+                --caller-name copykat \
+                --gene-pos {input.gene_pos} \
+                --sample-annotation {input.samp_annot} \
+                --output {output.results} \
+                2>{log}
+            """
+
+# Evaluate SCEVAN
+
+if 1:
+
+    rule evaluate_scevan_without_given_refs:
+        input:
+            ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
+            scevan_seg = f"results/output_{DATASET}/scevan_unknown_ref/output/{DATASET}_subclone1_CN.seg",
+            scevan_pred = f"results/output_{DATASET}/scevan_unknown_ref/output/{DATASET}_scevan_prediction.txt",
+            gene_pos = GENE_POS_FILE,
+            log2file = f"results/output_{dataset}/scevan_unknown_ref/output/{dataset}_CNAmtx.RData",
+            annofile = f"results/output_{dataset}/scevan_unknown_ref/output/{dataset}_count_mtx_annot.RData",
+            samp_annot = f"data/input_{DATASET}/sample_annotation.txt",
+        output:
+            results = f"results/output_{DATASET}/evaluation/evaluation_scevan_without_preclassified_cells.tsv"
+        log:
+            f"logs/evaluate_scevan_without_preclassified_cells_{DATASET}.log"
+        benchmark:
+            f"benchmarks/evaluate_scevan_without_preclassified_cells_{DATASET}.txt"
+        threads: 1
+        resources:
+            mem_mb = 16000
+        shell:
+            r"""
+            set -euo pipefail
+            python3 {workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py \
+                --ground-truth {input.ground_truth} \
+                --caller-result {input.log2file} \
+                --caller-name scevan_predict \
+                --gene-pos {input.gene_pos} \
+                --sample-annotation {input.samp_annot} \
+                --output {output.results} \
+                --scevan_count_mtx_annot_rdata_path {input.annofile} \
+                2>{log}
+            """
+
+if HAS_REF_CELLS:
+
+    rule evaluate_scevan_with_given_refs:
+        input:
+            ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
+            scevan_seg = f"results/output_{DATASET}/scevan_known_ref/output/{DATASET}_subclone1_CN.seg",
+            scevan_pred = f"results/output_{DATASET}/scevan_known_ref/output/{DATASET}_scevan_prediction.txt",
+            gene_pos = GENE_POS_FILE,
+            log2file = f"results/output_{dataset}/scevan_known_ref/output/{dataset}_CNAmtx.RData",
+            annofile = f"results/output_{dataset}/scevan_known_ref/output/{dataset}_count_mtx_annot.RData",
+            samp_annot = f"data/input_{DATASET}/sample_annotation.txt",
+        output:
+            results = f"results/output_{DATASET}/evaluation/evaluation_scevan_with_preclassified_cells.tsv"
+        log:
+            f"logs/evaluate_scevan_with_preclassified_cells_{DATASET}.log"
+        benchmark:
+            f"benchmarks/evaluate_scevan_with_preclassified_cells_{DATASET}.txt"
+        threads: 1
+        resources:
+            mem_mb = 16000
+        shell:
+            r"""
+            set -euo pipefail
+            python3 {workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py \
+                --ground-truth {input.ground_truth} \
+                --caller-result {input.log2file} \
+                --caller-name scevan \
+                --gene-pos {input.gene_pos} \
+                --sample-annotation {input.samp_annot} \
+                --output {output.results} \
+                --scevan_count_mtx_annot_rdata_path {input.annofile} \
+                2>{log}
+            """
+
+# Evaluate CONICSmat
+
+if 1:
+
+    rule evaluate_conicsmat_without_given_refs:
+        input:
+            ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
+            cnv_types = f"results/output_{DATASET}/CONICSmat_unknown_ref/cnv_types.tsv",
+            chrom_pos = CHROM_ARM_POS,
+            gene_pos = GENE_POS_FILE,
+            samp_annot = f"data/input_{DATASET}/sample_annotation.txt",
+        output:
+            results = f"results/output_{DATASET}/evaluation/evaluation_conicsmat_without_preclassified_cells.tsv"
+        log:
+            f"logs/evaluate_conicsmat_with_preclassified_cells_{DATASET}.log"
+        benchmark:
+            f"benchmarks/evaluate_conicsmat_without_preclassified_cells_{DATASET}.txt"
+        threads: 1
+        resources:
+            mem_mb = 16000
+        shell:
+            r"""
+            set -euo pipefail
+            python3 {workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py \
+                --ground-truth {input.ground_truth} \
+                --caller-result {input.cnv_types} \
+                --caller-name conicsmat \
+                --gene-pos {input.gene_pos} \
+                --sample-annotation {input.samp_annot} \
+                --chrom-arm-pos {input.chrom_pos} \
+                --output {output.results} \
+                2>{log}
+            """
+
+if HAS_REF_CELLS:
+
+    rule evaluate_conicsmat_with_given_refs:
+        input:
+            ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
+            cnv_types = f"results/output_{DATASET}/CONICSmat_known_ref/cnv_types.tsv",
+            chrom_pos = CHROM_ARM_POS,
+            gene_pos = GENE_POS_FILE,
+            samp_annot = f"data/input_{DATASET}/sample_annotation.txt",
+        output:
+            results = f"results/output_{DATASET}/evaluation/evaluation_conicsmat_with_preclassified_cells.tsv"
+        log:
+            f"logs/evaluate_conicsmat_with_preclassified_cells_{DATASET}.log"
+        benchmark:
+            f"benchmarks/evaluate_conicsmat_with_preclassified_cells_{DATASET}.txt"
+        threads: 1
+        resources:
+            mem_mb = 16000
+        shell:
+            r"""
+            set -euo pipefail
+            python3 {workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py \
+                --ground-truth {input.ground_truth} \
+                --caller-result {input.cnv_types} \
+                --caller-name conicsmat \
+                --gene-pos {input.gene_pos} \
+                --sample-annotation {input.samp_annot} \
+                --chrom-arm-pos {input.chrom_pos} \
+                --output {output.results} \
+                2>{log}
+            """
+
+# Evaluate CaSpER
+
+if MODE == "bam" and HAS_REF_CELLS:
+
+    rule evaluate_casper_with_given_refs:
+        input:
+            ground_truth      = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
+            casper_cellmatrix = f"results/output_{DATASET}/casper_known_ref/{DATASET}_casper_cell_matrix.tsv",
+            gene_pos          = GENE_POS_FILE,
+            samp_annot        = f"data/input_{DATASET}/sample_annotation.txt",
+            chrom_pos         = CHROM_ARM_POS,
+        output:
+            results = f"results/output_{DATASET}/evaluation/evaluation_casper_with_preclassified_cells.tsv"
+        log:
+            f"logs/evaluate_casper_with_preclassified_cells_{DATASET}.log"
+        benchmark:
+            f"benchmarks/evaluate_casper_with_preclassified_cells_{DATASET}.txt"
+        threads: 1
+        resources:
+            mem_mb = 16000
+        shell:
+            r"""
+            set -euo pipefail
+            python3 {workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py \
+                --ground-truth {input.ground_truth} \
+                --caller-result {input.casper_cellmatrix} \
+                --caller-name casper \
+                --gene-pos {input.gene_pos} \
+                --sample-annotation {input.samp_annot} \
+                --output {output.results} \
+                --chrom-arm-pos {input.chrom_pos} \
+                2>{log}
+            """
+
+# Evaluate Numbat
+
+if MODE == "bam":
+
+    rule evaluate_numbat_without_given_refs:
+        input:
+            ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
+            numbat_expr  = f"results/output_{DATASET}/numbat_unknown_ref/gexp_roll_wide.tsv.gz",
+            gene_pos     = GENE_POS_FILE,
+            samp_annot   = f"data/input_{DATASET}/sample_annotation.txt",
+        output:
+            results = f"results/output_{DATASET}/evaluation/evaluation_numbat_without_preclassified_cells.tsv"
+        log:
+            f"logs/evaluate_numbat_without_preclassified_cells_{DATASET}.log"
+        benchmark:
+            f"benchmarks/evaluate_numbat_without_preclassified_cells_{DATASET}.txt"
+        threads: 1
+        resources:
+            mem_mb = 16000
+        shell:
+            r"""
+            set -euo pipefail
+            python3 {workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py \
+                --ground-truth {input.ground_truth} \
+                --caller-result {input.numbat_expr} \
+                --caller-name numbat \
+                --gene-pos {input.gene_pos} \
+                --sample-annotation {input.samp_annot} \
+                --output {output.results} \
+                2>{log}
+            """
+
+if MODE == "bam" and HAS_REF_CELLS:
+
+    rule evaluate_numbat_with_given_refs:
+        input:
+            ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
+            numbat_expr  = f"results/output_{DATASET}/numbat_known_ref/gexp_roll_wide.tsv.gz",
+            gene_pos     = GENE_POS_FILE,
+            samp_annot   = f"data/input_{DATASET}/sample_annotation.txt",
+        output:
+            results = f"results/output_{DATASET}/evaluation/evaluation_numbat_with_preclassified_cells.tsv"
+        log:
+            f"logs/evaluate_numbat_with_preclassified_cells_{DATASET}.log"
+        benchmark:
+            f"benchmarks/evaluate_numbat_with_preclassified_cells_{DATASET}.txt"
+        threads: 1
+        resources:
+            mem_mb = 16000
+        shell:
+            r"""
+            set -euo pipefail
+            python3 {workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py \
+                --ground-truth {input.ground_truth} \
+                --caller-result {input.numbat_expr} \
+                --caller-name numbat \
+                --gene-pos {input.gene_pos} \
+                --sample-annotation {input.samp_annot} \
+                --output {output.results} \
+                2>{log}
+            """

@@ -57,11 +57,21 @@ threads<-snakemake@threads
 print("Execute Numbat")
 # ------------------------------------------------------------------------------
 
+if (FALSE) {
 #Load dataset matrix (annotation file not required in this modus)
 data_matrix<-fread(input_count_mat)
 #Format into a matrix
 gene_names<-data_matrix$V1
 data_matrix$V1<-NULL
+}
+
+# <FIX URL=https://chat.deepseek.com/a/chat/s/3b809dd5-1e42-4e56-a19b-507eabe4cd31>
+data_matrix <- fread(input_count_mat, header = TRUE)
+# Now first column is gene names, first row is cell barcodes
+gene_names <- data_matrix[[1]]
+data_matrix[[1]] <- NULL
+# </FIX>
+
 data_matrix<-as.matrix(data_matrix)
 rownames(data_matrix)<-gene_names
 
@@ -70,6 +80,14 @@ annotation<-fread(input_annotations, header=FALSE)
 ref_groups<-read.table(input_ref_groups,header=TRUE)
 ref_cells <- annotation$V1[annotation$V2 %in% ref_groups$ref_groups]
 cancer_cells<-annotation$V1[!annotation$V2 %in% ref_groups$ref_groups]
+
+# https://chat.deepseek.com/a/chat/s/3b809dd5-1e42-4e56-a19b-507eabe4cd31
+# After loading data_matrix and before subsetting
+print(dim(data_matrix))
+print(head(colnames(data_matrix)))
+print(length(cancer_cells))
+print(head(cancer_cells))
+print(all(cancer_cells %in% colnames(data_matrix)))
 
 #Split into cancer and reference matrix
 count_matrix<-data_matrix[,cancer_cells]

@@ -59,7 +59,8 @@ infercnv_obj = infercnv::run(infercnv_obj,
                              HMM=TRUE,
 			                       HMM_type="i6",
 			                       analysis_mode='subclusters',
-			                       num_threads = threads)
+			                       num_threads = threads,
+                                   write_expr_matrix=TRUE)
 
 # ------------------------------------------------------------------------------
 print("SessionInfo:")

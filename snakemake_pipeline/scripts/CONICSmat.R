@@ -50,7 +50,9 @@ print("Execute CONICSmat")
 #load inputs
 expr_df <- as.matrix(read.table(input_expression_df,sep="\t",
                                 header=T,row.names=1,check.names=F))
+print(paste("Started reading file input_chrom_pos_df=", input_chrom_pos_df))
 chrom_regions <- read.table(input_chrom_pos_df,sep="\t",row.names = 1,header = T)
+print(paste("Started reading file input_gene_pos_df=", input_gene_pos_df))
 gene_pos <- read.table(file = input_gene_pos_df, header = TRUE, sep = "\t")
 
 #Normalize expr_df to counts per million
@@ -83,9 +85,11 @@ if(is.null(input_annotations)){
   print("No reference cells defined, CONICSmat will identify cancer cells automatically")
   
   #determine if avg gene expression in any region shows bimodal distrib. across cells
+  print("PlotAll-1A starts!")
   l <- plotAll(expr_df,normFactor,chrom_regions,gene_pos, 
                fname = paste(output_path, "CONICSmat_CNV", sep = "//"))
   
+  print("PlotAll-1A done!")
 } else {
   print("Reference cells for CONICSmat defined")
   
@@ -98,11 +102,18 @@ if(is.null(input_annotations)){
   ref_cells <- annotation$V1[annotation$V2 %in% ref_groups$ref_groups]
   ref_indices <- which(colnames(expr_df) %in% ref_cells)
   
+  print("PlotAll-1B starts!")
+  print(head(expr_df))
+  print(head(normFactor))
+  print(head(chrom_regions))
+  print(head(gene_pos))
+  print(head(ref_indices))
+  print("PlotAll-1B starts!")
   #determine if avg gene expression in any region shows bimodal distrib. across cells
   l <- plotAll(expr_df,normFactor,chrom_regions,gene_pos, 
                fname = paste(output_path, "CONICSmat_CNV", sep = "//"),
                normal = ref_indices)
-  
+  print("PlotAll-1B done!")
 }
 
 #create a heatmap of posterior prob. of cells for component2 of each region
@@ -148,7 +159,7 @@ if(length(candRegions)){
   redu <- plotAll(expr_df,normFactor,chrom_regions[candRegions,],gene_pos, 
                   fname = paste(output_path, "CONICSmat_CNV_with_info", sep = "//"),
                   normal=normal,tumor=tumor)
-  
+  rint("PlotAll-2 done!")
   #Generate the binary matrix, inferring CNV presence through 
   #thresholding posterior probabilities
   bin_mat <- binarizeMatrix(redu,normal,tumor,0.8)

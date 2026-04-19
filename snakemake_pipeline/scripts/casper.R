@@ -15,6 +15,22 @@ library(data.table)
 library(Seurat)
 
 # ------------------------------------------------------------------------------
+print(paste("Load built-in data to check input datatypes",
+"(data are from https://github.com/akdess/CaSpER/blob/master/demo/sCellGBM.R)."))
+# -----------------------------------------------------------------------------
+
+# TODO: remove this absolute path
+source("/stor/zxf/cnv/cnvguider-sc-rna/benchmark_scrnaseq_cnv_callers/snakemake_pipeline/scripts/casper_helpers.R")
+data("scell_gbm")
+
+built_in.data <- scell_gbm$data
+built_in.loh <-  scell_gbm$loh
+built_in.loh.name.mapping <-  scell_gbm$loh.name.mapping
+
+built_in.annotation <- generateAnnotation_offline(id_type="hgnc_symbol", genes=rownames(built_in.data), ishg19=T, centromere)
+built_in.data <- built_in.data[match(built_in.annotation$Gene,rownames(built_in.data)), ]
+
+# ------------------------------------------------------------------------------
 print("Get input parameters from snakemake")
 # ------------------------------------------------------------------------------
 
@@ -73,9 +89,16 @@ count_seurat <- CreateSeuratObject(counts = count_matrix, project = "bcc",
 count_seurat <- NormalizeData(count_seurat , scale.factor = 1e6, 
                               normalization.method = "RC")
 
-log.ge <- as.matrix(count_seurat@assays$RNA@data)
-log.ge <- log2(log.ge +1)
+# the try-catch logic is from https://chat.deepseek.com/a/chat/s/4b4488c8-fd86-4d9f-b8fb-8982b775f7a4
+log.ge <- tryCatch({
+  # Attempt Seurat v4 style access
+  as.matrix(count_seurat@assays$RNA@data)
+}, error = function(e) {
+  # Fallback for Seurat v5: use GetAssayData
+  as.matrix(GetAssayData(count_seurat, layer = "data"))
+})
 
+log.ge <- log2(log.ge +1)
 rm(count_seurat)
 gc()
 
@@ -98,10 +121,35 @@ loh <- readBAFExtractOutput(path=dirname(input_af),
 
 #Rename files to match sample name
 names(loh)<-gsub("_BAFExtract.af","",names(loh))
+if (length(loh) == 1) { names(loh) <- "tumor"; }
 
 #Create sample - barcode mapping for LOH annotation
 loh_name_mapping <- data.frame(loh.name= meta_data$sample, 
                                sample.name=meta_data$cell)
+
+print('var=head(log.ge)')
+head(log.ge)
+print('var=head(built_in.data)')
+head(built_in.data)
+
+print('var=head(annotation)')
+head(annotation)
+print('var=head(built_in.annotation)')
+head(built_in.annotation)
+
+print('var=lapply(loh, head)')
+lapply(loh, head)
+print('var=lapply(built_in.loh, head)')
+lapply(built_in.loh, head)
+
+print('var=head(loh_name_mapping)')
+head(loh_name_mapping)
+print('var=head(built_in.loh.name.mapping)')
+head(built_in.loh.name.mapping)
+
+print('var=control.sample.ids=head(control_cells)')
+head(control_cells)
+print('var=control.sample.ids="REF"')
 
 #Initialize CaSpER object
 object <- CreateCasperObject(raw.data=log.ge,

@@ -15,6 +15,9 @@ print("Load libraries")
 library(CaSpER)
 library(data.table)
 
+# This script contains the definition of generateAnnotation_offline
+source(snakemake@params$helper_script)
+
 # ------------------------------------------------------------------------------
 print("Get input parameters from snakemake")
 # ------------------------------------------------------------------------------
@@ -34,9 +37,16 @@ count_matrix<-fread(input_file)
 data(hg38_cytoband)
 
 # Get annotation (works with ensembl_gene_id and hgnc_symbol)
-annotation <- generateAnnotation(id_type="hgnc_symbol",
+#annotation <- generateAnnotation(id_type="hgnc_symbol",
+#                                 genes=count_matrix$V1,
+#                                 ishg19=F, centromere_hg38)
+#annotation <- readRDS("casper_gene_annotation_GRCh38.rds")
+
+annotation <- generateAnnotation_offline(
+                                 id_type="hgnc_symbol",
                                  genes=count_matrix$V1,
                                  ishg19=F, centromere_hg38)
+
 write.table(annotation,file=output_gene_annot,
             sep="\t",quote=FALSE,row.names = FALSE)
 

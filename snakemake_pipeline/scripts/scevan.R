@@ -36,6 +36,12 @@ print(paste("Running SCEVAN for the following organism:",input_organism))
 output_file<-snakemake@output$cnv_file
 output_pred<-snakemake@output$pred_file
 
+subclone1_file <- output_file
+clone1_file <- gsub("_subclone1_CN.seg", "_Clonal_CN.seg", subclone1_file)
+
+expected_CNAmtx_file <- gsub("_subclone1_CN.seg", "_CNAmtxSubclones.RData", subclone1_file)
+actual_CNAmtx_file <- gsub("_subclone1_CN.seg", "_CNAmtx.RData", subclone1_file)
+
 # ------------------------------------------------------------------------------
 print("Execute the SCEVAN in the chosen settings.")
 # ------------------------------------------------------------------------------
@@ -78,11 +84,14 @@ if(input_clones){
 #be created automatically by SCEVAN
 output_dir<-dirname(dirname(output_file))
 dir.create(output_dir,recursive=TRUE) # gives a warning if the directory exists already
+old_wd <- getwd()
 setwd(output_dir)
 
 #Extract name of the dataset
 dataset_name<-gsub("output_","",unlist(strsplit(output_dir,split="/"))[2])
 
+# https://www.doubao.com/chat/38419084615184642
+if (FALSE) {
 scevan_output<-SCEVAN::pipelineCNA(data_matrix, 
                                    sample = dataset_name, 
                                    par_cores = 1,
@@ -90,6 +99,31 @@ scevan_output<-SCEVAN::pipelineCNA(data_matrix,
                                    SUBCLONES = input_clones, 
                                    plotTree = FALSE,
                                    organism = input_organism)
+}
+scevan_output <- tryCatch({
+    message("Try first run with (SUBCLONES = ", input_clones, ")...")
+    SCEVAN::pipelineCNA(
+      data_matrix, 
+      sample = dataset_name,
+      par_cores = 1,
+      norm_cell = ref_cells,
+      SUBCLONES = input_clones,
+      plotTree = FALSE,
+      organism = input_organism
+    )
+  }, error = function(e) {
+    message("The first run failed, failure message: ", e$message)
+    message("Back to safe mode with (SUBCLONES = FALSE), rerunning...")
+    SCEVAN::pipelineCNA(
+      data_matrix,
+      sample = dataset_name,
+      par_cores = 1,
+      norm_cell = ref_cells,  
+      SUBCLONES = FALSE,
+      plotTree = FALSE,
+      organism = input_organism
+    )
+})
 
 #Save cell classification as it is not saved automatically in the directory
 #Remark: output_pred file will be saved in the SCEVAN output directory
@@ -100,3 +134,24 @@ write.table(scevan_output,file=paste0("output/",basename(output_pred)),
 print("SessionInfo:")
 # ------------------------------------------------------------------------------
 sessionInfo()
+
+setwd(old_wd)
+
+safe_cp <- function(src_file, dest_file) {
+  if (file.exists(dest_file)) {
+    print(paste0("The destination file `", dest_file, "` already exists, so skip changing the destination file. "))
+  } else if (file.exists(src_file)) {
+    copy_success <- file.copy(src_file, dest_file, overwrite=FALSE)
+    if (copy_success) {
+        message(paste0("Copied successfully: `", src_file, "` -> `", dest_file, "`"))
+    } else {
+        stop(paste0("FAILED to copy: `", src_file, "` -> `", dest_file, "`"))
+    }
+  } else {
+     stop(paste("Both observed and expected SCEVAN output not found:", src_file, dest_file))
+  }
+}
+
+safe_cp(clone1_file, subclone1_file)
+safe_cp(actual_CNAmtx_file, expected_CNAmtx_file)
+
