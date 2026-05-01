@@ -88,7 +88,8 @@ old_wd <- getwd()
 setwd(output_dir)
 
 #Extract name of the dataset
-dataset_name<-gsub("output_","",unlist(strsplit(output_dir,split="/"))[2])
+#dataset_name<-gsub("output_","",unlist(strsplit(output_dir,split="/"))[2])
+dataset_name<-snakemake@params$dataset
 
 # https://www.doubao.com/chat/38419084615184642
 if (FALSE) {

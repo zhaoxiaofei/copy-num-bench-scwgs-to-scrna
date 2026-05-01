@@ -69,7 +69,8 @@ dir.create(output_dir,recursive=TRUE) # gives a warning if the directory exists 
 setwd(output_dir)
 
 #Extract name of the dataset
-dataset_name<-gsub("output_","",unlist(strsplit(output_dir,split="/"))[2])
+#dataset_name<-gsub("output_","",unlist(strsplit(output_dir,split="/"))[2])
+dataset_name <- snakemake@params$dataset
 
 #Run copyKat
 copykat.test <- copykat(rawmat=data_matrix, #2d matrix with gene expression counts
