@@ -32,7 +32,8 @@ Rscript -e 'library(devtools); install_github("diazlab/CONICS/CONICSmat")'
 git clone https://github.com/akdess/BAFExtract.git && cd BAFExtract && make
 
 # Install ginkgo, the scWGS-based CNV caller for constructing single-cell CNV ground-truth
-${conda} create -y -n ${ginkgo_env} bioconductor-ctc bioconductor-dnacopy r-devtools r-inline r-gplots r-scales r-plyr r-ggplot2 r-gridExtra r-fastcluster r-heatmap3
+${conda} create -y -n ${ginkgo_env} bioconductor-ctc bioconductor-dnacopy r-devtools r-inline r-gplots r-scales r-plyr r-ggplot2 r-gridExtra r-fastcluster r-heatmap3 \
+bwa bowtie parallel wgsim
 
 # Download databases
 mkdir -p data/annotations/
