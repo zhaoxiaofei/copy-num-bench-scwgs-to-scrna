@@ -7,6 +7,8 @@
   Initial
 - https://sorryios.ai/chat/dd8f4c23-9f1e-450e-af0b-a8f7128a02db
   Added CONICSmat, Numbat, and CaSpER into the benchmark
+- https://agent.minimaxi.com/share/389393240474113?chat_type=2
+  Added infercna support
 </REVISION_HISTORY>
 '''
 
@@ -296,6 +298,9 @@ def detect_caller_format(path, caller_name):
             
     if "infercnv" in cn:
         return "infercnv"
+    # --- infercna detection (similar to infercnv, gene x cell matrix) ---
+    if "infercna" in cn:
+        return "infercna"
     if "conicsmat" in cn or "conics" in cn:
         return "conicsmat"
     if "numbat" in cn:                # NEW
@@ -414,6 +419,31 @@ def load_matrix_like_caller(path, caller_format, gene_positions, gt_cell_names, 
                         continue
                     caller_by_cell[cell].append((chrom, start, end, v))
 
+            return dict(caller_by_cell), covered_intervals, caller_cell_names
+
+        elif caller_format == "infercna":
+            # infercna output: gene x cell matrix with log2 ratios
+            # Header: first column is empty/header, followed by cell names
+            if len(header) < 2:
+                raise ValueError("infercna matrix has too few columns.")
+            caller_cell_names = header[1:]
+            covered_intervals = defaultdict(list)
+            for row in reader:
+                if len(row) < 2:
+                    continue
+                feature = row[0]
+                if feature not in gene_positions:
+                    continue
+                chrom, start, end = gene_positions[feature]
+                covered_intervals[chrom].append((start, end))
+                vals = row[1:]
+                for i, cell in enumerate(caller_cell_names):
+                    if i >= len(vals):
+                        continue
+                    v = safe_float(vals[i])
+                    if v is None:
+                        continue
+                    caller_by_cell[cell].append((chrom, start, end, v))
             return dict(caller_by_cell), covered_intervals, caller_cell_names
 
         elif caller_format in ("infercnv", "generic_matrix"):
@@ -665,6 +695,7 @@ def classify_pred_value(med, value, caller_format):
     median-relative thresholds.
     """
     if caller_format in ("copykat", "infercnv", "generic_matrix",
+                         "infercna", # infercna uses similar log2 ratio format
                          "scevan_rdata", "numbat",            # NEW
                          "casper", "conicsmat"):              # NEW
         # Check if data look centered around zero.
@@ -925,6 +956,7 @@ def make_boxplot(long_rows, caller_name, out_png):
         "CopyNumber gain ROC-AUC",
         "CopyNumber loss ROC-AUC",
         "Fraction of the exome with inferred copy numbers",
+        'Fraction of the cells with inferred copy numbers',
         # The following are ill-defined
         # because integer copy numbers cannot be inferred from RNA-seq data
         "CopyNumber gain precision",
@@ -995,6 +1027,24 @@ def make_boxplot(long_rows, caller_name, out_png):
     fig.savefig(out_png, dpi=200)
     plt.close(fig)
 
+def cellpath2id(c):
+    multidots = len(c.split('.')) > 2
+    if '..' in c: sep = '..'
+    elif multidots: sep = '.'
+    else: sep = '..'
+    return c.split(sep)[-1].replace('/', '.').replace('_', '.').replace('-', '.')
+
+def cellnames_to_id2name(cell_names):
+    keys = [cellpath2id(c) for c in cell_names]
+    seen = set()
+    duplicates = set()
+    for key in keys:
+        if key in seen:
+            duplicates.add(key)
+        seen.add(key)
+    if duplicates:
+        raise ValueError(f"Duplicate keys from cellpath2id: {sorted(duplicates)}")
+    return {cellpath2id(c) : c for c in cell_names}
 
 def main():
     args = parse_args()
@@ -1023,13 +1073,25 @@ def main():
         print(f"ERROR: No caller signal loaded from {args.caller_result}.", file=sys.stderr)
         sys.exit(1)
 
+    cell_to_gt_name = cellnames_to_id2name(gt_cell_names)
+    cell_to_caller_name = cellnames_to_id2name(caller_cell_names)
+    common_cells = set(cell_to_gt_name.keys()) & set(cell_to_caller_name.keys())
+
     logging.info('Started computing exome fraction')
     exome_fraction = compute_exome_fraction(covered_intervals_by_chrom, total_exome_bp)
 
+    def multiline_zip(list1, list2):
+        ret = []
+        for e1, e2 in zip(list1, list2):
+            ret.append('  ' + str(e1) + '\n  ' + str(e2))
+        return '\n,\n'.join(ret)
+
     gt_cell_names_2 = sorted(gt_cell_names)
-    assert (gt_cell_names == gt_cell_names_2), (
-            f'The cmd-line params {args} results in something expected: '
-            'cells in the truth set was not sorted, so perform sorting. ')
+    if gt_cell_names != gt_cell_names_2:
+        logging.warning(
+            f'The cmd-line params {args} results in something expected: cells in the truth set was not sorted. '
+            f'{multiline_zip(gt_cell_names, gt_cell_names_2)} is not element-wise matching)')
+        gt_cell_names = gt_cell_names_2
     caller_cell_names_2 = sorted(caller_cell_names)
     if caller_cell_names != caller_cell_names_2:
         logging.warning(
@@ -1038,14 +1100,15 @@ def main():
         caller_cell_names = caller_cell_names_2
 
     # Match cells by order, as requested by the user.
-    if caller_format in ("copykat", "infercnv", "generic_matrix", "scevan_rdata",
+    if caller_format in ("copykat", "infercnv", "generic_matrix", "scevan_rdata", "infercna",
                          "numbat", "casper", "conicsmat"):    # extended
         n_match = min(len(gt_cell_names), len(caller_cell_names))
         if n_match == 0:
             print("ERROR: No overlapping cell columns by order.", file=sys.stderr)
             sys.exit(1)
 
-        cell_pairs = [(gt_cell_names[i], caller_cell_names[i]) for i in range(n_match)]
+        # cell_pairs = [(gt_cell_names[i], caller_cell_names[i]) for i in range(n_match)]
+        cell_pairs =  [(cell_to_gt_name[c], cell_to_caller_name[c]) for c in sorted(common_cells)]
     else:
         # Segment-like fallback
         only_caller_cell = caller_cell_names[0]
@@ -1064,7 +1127,7 @@ def main():
             caller_format=caller_format,
             exome_fraction=exome_fraction,
         )
-
+        metrics['Fraction of the cells with inferred copy numbers'] = len(common_cells) / float(len(cell_to_gt_name))
         summary_rows.append((gt_cell, pred_cell, celltype, metrics.get("n_overlap_pairs", 0)))
 
         for metric_name, metric_value in metrics.items():
