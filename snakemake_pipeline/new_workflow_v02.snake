@@ -410,6 +410,7 @@ if MODE == "fastq":
                 for cell in ALL_CELL_IDS:
                     fq1 = ALL_RNA_FQ1_OF[cell]
                     fq2 = ALL_RNA_FQ2_OF.get(cell, "-")
+                    if fq2 in ['None', 'none', 'Null', 'null', None]: fq2 = '-'
                     # STAR manifest: read1 [read2] sample_name
                     # For paired‑end, give both; for single‑end, second column empty
                     m.write(f"{fq1}\t{fq2}\t{cell}\n")
