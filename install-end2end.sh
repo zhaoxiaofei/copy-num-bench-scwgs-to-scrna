@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 
 conda=micromamba # please change to mamba or conda if you want
-envname=cc_scrna1
-ginkgo_env=ginkgo_env1
+envname="$1"
+ginkgo_env="$2"
+
+if [ -z "${envname}" ]; then envname=cnb_scrna1 ; fi
+if [ -z "${ginkgo_env}" ]; then ginkgo_env=ginkgo_env1 ; fi
 
 conda_install_params="-c conda-forge -c bioconda"
 

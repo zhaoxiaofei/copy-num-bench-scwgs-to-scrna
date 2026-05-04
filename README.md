@@ -11,10 +11,11 @@ To establish highly accurate, cell-specific ground truths for these scRNA-seq-ba
 To set up the environment and install all necessary dependencies, navigate to this repository's root directory and run the provided installation script:
 ```bash
 # Clone the repo and navigate into it (if you haven't already)
-bash -evx install-end2end.sh
+# Install conda and micromamba (if you havent's already)
+bash -evx install-end2end.sh cnb_scrna1 ginkg_env1 # cnb: copy-num-bench, scrna: single-cell RNA-seq
 ```
 
-Next, install the scWGS-based CNV caller Ginkgo from [https://github.com/zhaoxiaofei/ginkgo](https://github.com/zhaoxiaofei/ginkgo) and build the hg19 genome (the build files will be used by Ginkgo). Then, modify the `config_template.yaml` file accordingly to match the path of Ginkgo in your file system.
+Next, run `micromamba activate ginkgo_env1` (if you haven't already), and then install the scWGS-based CNV caller Ginkgo from [https://github.com/zhaoxiaofei/ginkgo](https://github.com/zhaoxiaofei/ginkgo) and build the hg19 genome (the build files will be used by Ginkgo). Then, modify the `config_template.yaml` file accordingly to match the path of Ginkgo in your file system.
 
 ## Usage
 
@@ -28,6 +29,7 @@ Follow these steps to configure and run the benchmarking workflow:
    *(Example: `NUM_CORES=64`)*
 4. **Execute Snakemake:** Run the pipeline using the following command:
 ```bash
+# run: micromamba activate cnb_scrna1 (if you haven't already)
 snakemake \
   --configfile config_template.yaml ${YAML} \
   -s snakemake_pipeline/new_workflow.snake \
