@@ -14,6 +14,8 @@ To set up the environment and install all necessary dependencies, navigate to th
 bash -evx install-end2end.sh
 ```
 
+Next, install the scWGS-based CNV caller Ginkgo from [https://github.com/zhaoxiaofei/ginkgo](https://github.com/zhaoxiaofei/ginkgo) and build the hg19 genome (the build files will be used by Ginkgo). Then, modify the `config_template.yaml` file accordingly to match the path of Ginkgo in your file system.
+
 ## Usage
 
 Follow these steps to configure and run the benchmarking workflow:
@@ -21,7 +23,7 @@ Follow these steps to configure and run the benchmarking workflow:
 1. **Set the Configuration File:** Define your target YAML configuration file. 
    *(Example: `YAML=configs/config_BCIS106T_chip1_SAMN48409192_SRR33511671.yaml`)*
 2. **Prepare the Data:** Download the FASTQ files specified in your `$YAML` file, and edit the `$YAML` paths if necessary to match your local environment.
-   * *Note:* For instructions on generating the files specified in the config, please refer to the documentation provided by the authors of the datasets. Examples include [scONE-seq-data-processing](https://github.com/0YuLei0/scONE-seq-data-processing) and [wellDR-seq](https://github.com/navinlabcode/wellDR-seq).
+   * *Note:* For instructions on generating the FASTQ files specified in the config, please refer to the documentation provided by the authors of the datasets. Examples include [scONE-seq-data-processing](https://github.com/0YuLei0/scONE-seq-data-processing) and [wellDR-seq](https://github.com/navinlabcode/wellDR-seq).
 3. **Allocate Resources:** Specify the number of CPU cores available for the pipeline.
    *(Example: `NUM_CORES=64`)*
 4. **Execute Snakemake:** Run the pipeline using the following command:

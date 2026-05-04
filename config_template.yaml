@@ -1,5 +1,6 @@
 # Please modify the following variable assignment
-GINKGO_SH: "/stor/zxf/cnv/cnvguider/data3to4code/ginkgo/cli/ginkgo_2.sh" # "/mnt/d/code/ginkgo/cli/ginkgo.sh"
+GINKGO_SH: "/stor/zxf/cnv/cnvguider-sc-rna/ginkgo/cli/ginkgo_parallel.sh" # "/stor/zxf/cnv/cnvguider/data3to4code/ginkgo/cli/ginkgo_2.sh" # "/mnt/d/code/ginkgo/cli/ginkgo.sh"
+GINKGO_ENV: "ginkgo_env1" # should match the name from install-end2end.sh
 
 # Please do not modify the following two variable assignments
 ginkgo_genome: "hg19" # do not modify unless
@@ -10,7 +11,7 @@ ginkgo_binning: "variable_175000_48_bwa" # variable_500000_150_bwa # "variable_5
 # (I intentionally added the leading underscore to prevent name collision when concatenating this file with another file that contains these variables).
 
 _dataset: "scONE-seq_dataset"
-_scWGS_scRNA_prefix: "/storage/zxf/cnv/cnvguider-sc-rna/data/scONE-seq_bams/"
+_scWGS_scRNA_prefix: "/storage/zxf/cnv/cnvguider-sc-rna/data/scONE-seq_bams/" # If the SCWGS_SCRNA_PREFIX_OVERRIDE env variable is set, then override this
 _cellname_celltype_scWGS_scRNA_tup_list: # list of: cell ID, tumor-or-normal celltype, scWGS bam file path, scRNA-seq bam file path. 
 - ["A375_HCA00102-E13", "Tumor", "A375_HCA00102-E13_GENOMIC_SRR12861449_hg19.bam", "A375_HCA00102-E13_TRANSCRIPTOMIC_SRR12863174_grch38.bam"]
 - ["A375_HCA00102-E14", "Tumor", "A375_HCA00102-E14_GENOMIC_SRR12861450_hg19.bam", "A375_HCA00102-E14_TRANSCRIPTOMIC_SRR12863175_grch38.bam"]
