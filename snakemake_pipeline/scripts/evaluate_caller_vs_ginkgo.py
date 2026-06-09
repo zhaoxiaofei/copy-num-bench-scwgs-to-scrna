@@ -120,7 +120,11 @@ def parse_args():
                    help="The *_count_mtx_annot.RData file.")
     # NEW: Sample annotation argument
     p.add_argument("--sample-annotation", required=True,
-                   help="Path to sample annotation TSV (NO HEADER): original_sample_name\\ttumor|reference")
+                   help="Path to original author-provided sample annotation TSV (NO HEADER): original_sample_name\\ttumor|reference")
+    p.add_argument("--dna-annotation", required=True,
+                   help="Path to DNA sample annotation TSV (NO HEADER): DNA-inferred_sample_name\\ttumor|reference")
+    p.add_argument("--rna-annotation", required=True,
+                   help="Path to RNA sample annotation TSV (NO HEADER): RNA-inferred_sample_name\\ttumor|reference")
     return p.parse_args()
 
 # NEW: Load sample annotation (2-column TSV: cell name -> tumor/reference)
@@ -137,6 +141,10 @@ def load_sample_annotation(path):
                 cell_type = parts[1].strip()
                 annot.append((cell_name, cell_type))
     return annot
+
+def build_annot_dict(annot_list):
+    """Return {cellpath2id(name): celltype} from load_sample_annotation output."""
+    return {cellpath2id(name): ct for name, ct in annot_list}
 
 def safe_float(x):
     try:
@@ -770,6 +778,51 @@ def compute_prf(tp, fp, fn):
     return precision, recall, fscore
 
 
+def compute_cell_classification_benchmark(pred_types, gt_types):
+    """
+    Benchmark tumor-vs-normal cell labelling.
+    pred_types, gt_types: parallel lists of 'tumor' | 'reference' | None.
+    Returns a dict of classification metrics.
+    """
+    valid = [
+        (p, g) for p, g in zip(pred_types, gt_types)
+        if p in ("tumor", "reference") and g in ("tumor", "reference")
+    ]
+    if len(valid) < 2:
+        return {}
+
+    pred_labels = [1 if p == "tumor" else 0 for p, g in valid]
+    gt_labels   = [1 if g == "tumor" else 0 for p, g in valid]
+
+    tp = sum(1 for g, p in zip(gt_labels, pred_labels) if g == 1 and p == 1)
+    fp = sum(1 for g, p in zip(gt_labels, pred_labels) if g == 0 and p == 1)
+    fn = sum(1 for g, p in zip(gt_labels, pred_labels) if g == 1 and p == 0)
+    tn = sum(1 for g, p in zip(gt_labels, pred_labels) if g == 0 and p == 0)
+
+    precision = tp / (tp + fp) if (tp + fp) > 0 else float("nan")
+    recall    = tp / (tp + fn) if (tp + fn) > 0 else float("nan")
+    f1 = (
+        2 * precision * recall / (precision + recall)
+        if not (math.isnan(precision) or math.isnan(recall)) and (precision + recall) > 0
+        else float("nan")
+    )
+    accuracy = (tp + tn) / len(valid)
+
+    auc = (
+        sklearn.metrics.roc_auc_score(gt_labels, pred_labels)
+        if len(set(gt_labels)) == 2
+        else float("nan")
+    )
+
+    return {
+        "n_cells":         len(valid),
+        "tumor_precision": precision,
+        "tumor_recall":    recall,
+        "tumor_f1":        f1,
+        "accuracy":        accuracy,
+        "roc_auc":         auc,
+    }
+
 def build_overlap_pairs(gt_intervals, pred_intervals):
     """
     Pair GT and prediction values through interval overlap.
@@ -945,6 +998,89 @@ def compute_metrics_for_cell(gt_intervals, pred_intervals, caller_format, exome_
 # MODIFIED: Split boxplot into Tumor vs Normal/Reference
 def make_boxplot(long_rows, caller_name, out_png):
     if plt is None:
+        sys.stderr.write("WARNING: matplotlib not installed. Skipping boxplot.\n")
+        return
+
+    metric_order = [
+        "Pearson Correlation Coefficient",
+        "Spearman Correlation Coefficient",
+        "CopyNumber gain ROC-AUC",
+        "CopyNumber loss ROC-AUC",
+        "Fraction of the exome with inferred copy numbers",
+        "Fraction of the cells with inferred copy numbers",
+        
+        #"CopyNumber gain precision",
+        #"CopyNumber gain recall",
+        #"CopyNumber gain F-score",
+        #"CopyNumber loss precision",
+        #"CopyNumber loss recall",
+        #"CopyNumber loss F-score",
+        #"Multiclass classification accuracy",
+    ]
+
+    # Three stratification schemes: (field_in_row, label, tumor_color, normal_color)
+    stratifications = [
+        ("celltype",     "Sample Annotation",  "#FF6B6B", "#4ECDC4"),
+        ("celltype_dna", "DNA Annotation",     "#E07B54", "#54A0C8"),
+        ("celltype_real_rna", "Real RNA Annotation",  "#C966CC", "#66CC88"),
+        ("celltype_refset_rna", "AtLeastOneRefCluster RNA Annotation", "#C966CC", "#66CC88"),
+    ]
+
+    n_rows = len(stratifications)
+    fig, axes = plt.subplots(n_rows, 2, figsize=(24, 8 * n_rows), sharey="row")
+
+    def group_metrics(rows):
+        grouped = defaultdict(list)
+        for r in rows:
+            m, v = r["metric"], r["value"]
+            if m in metric_order and not math.isnan(v):
+                grouped[m].append(v)
+        return [grouped[m] for m in metric_order]
+
+    for row_idx, (ct_field, strat_label, t_color, n_color) in enumerate(stratifications):
+        tumor_rows  = [r for r in long_rows if r.get(ct_field) == "tumor"]
+        normal_rows = [r for r in long_rows if r.get(ct_field) == "reference"]
+
+        ax_t = axes[row_idx][0]
+        ax_n = axes[row_idx][1]
+
+        for ax, rows, color, side in (
+            (ax_t, tumor_rows,  t_color, "Tumor"),
+            (ax_n, normal_rows, n_color, "Normal/Reference"),
+        ):
+            n_cells = len({r["ground_truth_cell"] for r in rows})
+            bp = ax.boxplot(group_metrics(rows), patch_artist=True,
+                            labels=metric_order, showfliers=True)
+            ax.grid(which="both", axis="y")
+            ax.set_title(f"[{strat_label}] {side} (n={n_cells})", fontsize=10)
+            ax.set_xticklabels(ax.get_xticklabels(),
+                               rotation=30, fontsize=7, ha="right",
+                               va="top", rotation_mode="anchor")
+            for patch in bp["boxes"]:
+                patch.set_facecolor(color)
+                patch.set_alpha(0.8)
+
+        ax_t.set_ylabel("Performance Score")
+
+    for ax in axes.flatten():
+        ax.set_xlabel("Evaluation Metric")
+
+    legend_handles = [
+        Patch(facecolor="#FF6B6B", edgecolor="black", label="Tumor"),
+        Patch(facecolor="#4ECDC4", edgecolor="black", label="Normal/Reference"),
+    ]
+    fig.suptitle(
+        f"CNV Caller Performance: {caller_name}\n"
+        f"Rows: sample-annotation / DNA-annotation / RNA-annotation",
+        fontsize=13,
+    )
+    fig.legend(handles=legend_handles, loc="upper right", bbox_to_anchor=(0.99, 0.99))
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(out_png, dpi=150)
+    plt.close(fig)
+
+def _old_make_boxplot(long_rows, caller_name, out_png):
+    if plt is None:
         sys.stderr.write("WARNING: matplotlib is not installed. Skipping boxplot.\n")
         return
 
@@ -1054,7 +1190,16 @@ def main():
     # NEW: Load sample annotation
     logging.info('Started loading sample annotation')
     sample_annot = load_sample_annotation(args.sample_annotation)
+    dna_annot    = load_sample_annotation(args.dna_annotation)
+    rna_annot    = load_sample_annotation(args.rna_annotation)
+    rna_real_annot = load_sample_annotation(args.rna_annotation + '.maybe_zero_refs')
     
+    # Keyed by normalised cell ID
+    sample_annot_dict = build_annot_dict(sample_annot)
+    dna_annot_dict    = build_annot_dict(dna_annot)    # matched against gt_cell (DNA space)
+    rna_refset_annot_dict    = build_annot_dict(rna_annot)    # matched against pred_cell (RNA space)
+    rna_real_annot_dict = build_annot_dict(rna_real_annot)
+
     logging.info('Started loading gene positions')
     gene_positions, total_exome_bp = load_gene_positions(args.gene_pos)
     caller_format = detect_caller_format(args.caller_result, args.caller_name)
@@ -1117,6 +1262,55 @@ def main():
     long_rows = []
     summary_rows = []
 
+    # ── collect per-cell annotation tuples for the classification benchmarks ──
+    cell_ct_sample, cell_ct_dna, cell_ct_rna, cell_ct_real_rna = [], [], [], []
+
+    for gt_cell, pred_cell in cell_pairs:
+        gt_id   = cellpath2id(gt_cell)
+        pred_id = cellpath2id(pred_cell)
+
+        celltype_sample = sample_annot_dict.get(gt_id, "unknown")
+        celltype_dna    = dna_annot_dict.get(gt_id, "unknown")
+        celltype_refset_rna    = rna_refset_annot_dict.get(pred_id, "unknown")
+        celltype_real_rna = rna_real_annot_dict.get(pred_id, "unknown")
+
+        cell_ct_sample.append(celltype_sample)
+        cell_ct_dna.append(celltype_dna)
+        cell_ct_rna.append(celltype_refset_rna)
+        cell_ct_real_rna.append(celltype_real_rna)
+
+        logging.info(f"Processing {gt_cell} <-> {pred_cell} | "
+                     f"sample={celltype_sample}  dna={celltype_dna}  rna={celltype_refset_rna}  real_rna={celltype_real_rna}")
+
+        gt_intervals   = gt_by_cell.get(gt_cell, [])
+        pred_intervals = caller_by_cell.get(pred_cell, [])
+        metrics = compute_metrics_for_cell(
+            gt_intervals=gt_intervals,
+            pred_intervals=pred_intervals,
+            caller_format=caller_format,
+            exome_fraction=exome_fraction,
+        )
+        metrics["Fraction of the cells with inferred copy numbers"] = (
+            len(common_cells) / float(len(cell_to_gt_name))
+        )
+        summary_rows.append((gt_cell, pred_cell, celltype_sample, metrics.get("n_overlap_pairs", 0)))
+
+        for metric_name, metric_value in metrics.items():
+            if metric_name == "n_overlap_pairs":
+                continue
+            long_rows.append({
+                "caller":            args.caller_name,
+                "ground_truth_cell": gt_cell,
+                "caller_cell":       pred_cell,
+                "celltype":          celltype_sample,   # ← backward-compatible
+                "celltype_dna":      celltype_dna,      # ← new
+                "celltype_refset_rna":      celltype_refset_rna,      # ← new
+                "celltype_real_rna": celltype_real_rna, # ← new
+                "metric":            metric_name,
+                "value":             metric_value,
+            })
+
+    '''
     for (gt_cell, pred_cell), (orig_cell, celltype) in zip(cell_pairs, sample_annot):
         logging.info(f'Started iterating over the cell {gt_cell} {pred_cell} {orig_cell} {celltype}')
         gt_intervals = gt_by_cell.get(gt_cell, [])
@@ -1142,15 +1336,35 @@ def main():
                 "metric": metric_name,
                 "value": metric_value,
             })
-
+    '''
     out_dir = os.path.dirname(args.output)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
 
+    clf_benchmarks = {
+        "rna_vs_dna":    compute_cell_classification_benchmark(cell_ct_real_rna, cell_ct_dna),
+        "rna_vs_sample": compute_cell_classification_benchmark(cell_ct_real_rna, cell_ct_sample),
+        "dna_vs_sample": compute_cell_classification_benchmark(cell_ct_dna, cell_ct_sample),
+    }
+
+    clf_out = os.path.splitext(args.output)[0] + ".cell_classification.tsv"
+    with open(clf_out, "w", newline="") as f:
+        writer = csv.writer(f, delimiter="\t")
+        writer.writerow(["caller", "comparison", "metric", "value"])
+        for comparison, m in clf_benchmarks.items():
+            for metric_name, val in m.items():
+                sval = f"{val:.6f}" if isinstance(val, float) else str(val)
+                writer.writerow([args.caller_name, comparison, metric_name, sval])
+
+    print(f"Cell-classification benchmarks written to: {clf_out}")
+    for comp, m in clf_benchmarks.items():
+        print(f"  {comp}: {m}")
+
     # NEW: Updated TSV header with celltype
     with open(args.output, "w", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
-        writer.writerow(["caller", "ground_truth_cell", "caller_cell", "celltype", "metric", "value"])
+        writer.writerow(["caller", "ground_truth_cell", "caller_cell",
+                 "celltype", "celltype_dna", "celltype_refset_rna", "celltype_real_rna", "metric", "value"])
         for row in long_rows:
             val = row["value"]
             if isinstance(val, float) and math.isnan(val):
@@ -1162,6 +1376,9 @@ def main():
                 row["ground_truth_cell"],
                 row["caller_cell"],
                 row["celltype"],
+                row["celltype_dna"],
+                row["celltype_refset_rna"],
+                row["celltype_real_rna"],
                 row["metric"],
                 sval,
             ])
