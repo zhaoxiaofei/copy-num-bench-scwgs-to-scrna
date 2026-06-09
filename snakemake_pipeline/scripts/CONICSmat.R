@@ -159,7 +159,7 @@ if(length(candRegions)){
   redu <- plotAll(expr_df,normFactor,chrom_regions[candRegions,],gene_pos, 
                   fname = paste(output_path, "CONICSmat_CNV_with_info", sep = "//"),
                   normal=normal,tumor=tumor)
-  rint("PlotAll-2 done!")
+  print("PlotAll-2 done!")
   #Generate the binary matrix, inferring CNV presence through 
   #thresholding posterior probabilities
   bin_mat <- binarizeMatrix(redu,normal,tumor,0.8)
