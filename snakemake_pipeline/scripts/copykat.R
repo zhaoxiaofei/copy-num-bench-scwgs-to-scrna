@@ -86,7 +86,7 @@ copykat.test <- copykat(rawmat=data_matrix, #2d matrix with gene expression coun
                         output.seg="FALSE",
                         plot.genes="TRUE",
                         genome = input_genome,
-                        n.cores=1)
+                        n.cores=32)
 
 # ------------------------------------------------------------------------------
 print("SessionInfo:")
