@@ -129,6 +129,7 @@ def parse_args():
 
 # NEW: Load sample annotation (2-column TSV: cell name -> tumor/reference)
 def load_sample_annotation(path):
+    normal_celltypes = ['normal', 'reference', 'Normal', 'Reference']
     annot = []
     with _open_text(path) as f:
         for line in f:
@@ -139,6 +140,7 @@ def load_sample_annotation(path):
             if len(parts) >= 2:
                 cell_name = parts[0].strip()
                 cell_type = parts[1].strip()
+                if cell_type in normal_celltypes: cell_type = 'reference'
                 annot.append((cell_name, cell_type))
     return annot
 
@@ -1189,16 +1191,16 @@ def main():
     gt_by_cell, gt_cell_names = load_ground_truth_wide(args.ground_truth)
     # NEW: Load sample annotation
     logging.info('Started loading sample annotation')
-    sample_annot = load_sample_annotation(args.sample_annotation)
-    dna_annot    = load_sample_annotation(args.dna_annotation)
-    rna_annot    = load_sample_annotation(args.rna_annotation)
-    rna_real_annot = load_sample_annotation(args.rna_annotation + '.maybe_zero_refs')
+    sample_annot     = load_sample_annotation(args.sample_annotation)
+    dna_annot        = load_sample_annotation(args.dna_annotation)
+    rna_refset_annot = load_sample_annotation(args.rna_annotation)
+    rna_real_annot   = load_sample_annotation(args.rna_annotation + '.maybe_zero_refs')
     
     # Keyed by normalised cell ID
     sample_annot_dict = build_annot_dict(sample_annot)
     dna_annot_dict    = build_annot_dict(dna_annot)    # matched against gt_cell (DNA space)
-    rna_refset_annot_dict    = build_annot_dict(rna_annot)    # matched against pred_cell (RNA space)
-    rna_real_annot_dict = build_annot_dict(rna_real_annot)
+    rna_refset_annot_dict = build_annot_dict(rna_refset_annot)    # matched against pred_cell (RNA space)
+    rna_real_annot_dict   = build_annot_dict(rna_real_annot)
 
     logging.info('Started loading gene positions')
     gene_positions, total_exome_bp = load_gene_positions(args.gene_pos)
@@ -1271,7 +1273,7 @@ def main():
 
         celltype_sample = sample_annot_dict.get(gt_id, "unknown")
         celltype_dna    = dna_annot_dict.get(gt_id, "unknown")
-        celltype_refset_rna    = rna_refset_annot_dict.get(pred_id, "unknown")
+        celltype_refset_rna = rna_refset_annot_dict.get(pred_id, "unknown")
         celltype_real_rna = rna_real_annot_dict.get(pred_id, "unknown")
 
         cell_ct_sample.append(celltype_sample)
