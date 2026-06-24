@@ -6,15 +6,11 @@ GINKGO_ENV: "ginkgo_env1" # should match the name from install-end2end.sh
 ginkgo_genome: "hg19" # do not modify unless
 ginkgo_binning: "variable_175000_48_bwa" # variable_500000_150_bwa # "variable_500000_101_bowtie"
 
-# Please set the dataset, scWGS_scRNA_prefix, and cellname_celltype_scWGS_scRNA_tup_list variables here. 
+# Please set the dataset, scWGS_scRNA_prefix, and cellname_celltype_DNAseqFQ1_DNAseqFQ2_RNAseqFQ1_RNAseqFQ2_tup_list variables here.
 # Here are some example placeholder values
 # (I intentionally added the leading underscore to prevent name collision when concatenating this file with another file that contains these variables).
 
-_dataset: "scONE-seq_dataset"
-_scWGS_scRNA_prefix: "/storage/zxf/cnv/cnvguider-sc-rna/data/scONE-seq_bams/" # If the SCWGS_SCRNA_PREFIX_OVERRIDE env variable is set, then override this
-_cellname_celltype_scWGS_scRNA_tup_list: # list of: cell ID, tumor-or-normal celltype, scWGS bam file path, scRNA-seq bam file path. 
-- ["A375_HCA00102-E13", "Tumor", "A375_HCA00102-E13_GENOMIC_SRR12861449_hg19.bam", "A375_HCA00102-E13_TRANSCRIPTOMIC_SRR12863174_grch38.bam"]
-- ["A375_HCA00102-E14", "Tumor", "A375_HCA00102-E14_GENOMIC_SRR12861450_hg19.bam", "A375_HCA00102-E14_TRANSCRIPTOMIC_SRR12863175_grch38.bam"]
-- ["SRR16195045_GSM5609660_HUVEC_H9_scONEseq_042", "Normal", "SRR16195045_GSM5609660_HUVEC_H9_scONEseq_042_Homo_sapiens_OTHER_dna_hg19.bam", "SRR16195045_GSM5609660_HUVEC_H9_scONEseq_042_Homo_sapiens_OTHER_rna_grch38.bam"]
-- "etc."
+# dataset: ...
+# scWGS_scRNA_prefix: /nfs/wxz/zxf/copy-compass-sc-rna/sra-tables/
+# cellname_celltype_DNAseqFQ1_DNAseqFQ2_RNAseqFQ1_RNAseqFQ2_tup_list: ...
 
