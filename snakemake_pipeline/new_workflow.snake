@@ -329,26 +329,27 @@ always_has_ref_cells = 1
 
 def _default_targets():
     targets = []
-    targets.append(f"results/{mat_specific_dataset}_output/evaluation/evaluation_infercna_without_preclassified_cells.tsv")
-    targets.append(f"results/{mat_specific_dataset}_output/evaluation/evaluation_infercna_hg19_without_preclassified_cells.tsv")
-    targets.append(f"results/{mat_specific_dataset}_output/evaluation/evaluation_copykat_without_preclassified_cells.tsv")
-    targets.append(f"results/{mat_specific_dataset}_output/evaluation/evaluation_copykat_cellline_without_preclassified_cells.tsv")
-    targets.append(f"results/{mat_specific_dataset}_output/evaluation/evaluation_scevan_without_preclassified_cells.tsv")
-    targets.append(f"results/{mat_specific_dataset}_output/evaluation/evaluation_CONICSmat_without_preclassified_cells.tsv")
+    targets.append(f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercna_without_preclassified_cells.tsv")
+    targets.append(f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercna_hg19_without_preclassified_cells.tsv")
+    targets.append(f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_copykat_without_preclassified_cells.tsv")
+    targets.append(f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_copykat_cellline_without_preclassified_cells.tsv")
+    targets.append(f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_scevan_without_preclassified_cells.tsv")
+    targets.append(f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_CONICSmat_without_preclassified_cells.tsv")
     if MODE == "fastq" or MODE == "bam":
-        targets.append(f"results/{mat_specific_dataset}_output/evaluation/evaluation_numbat_without_preclassified_cells.tsv")
+        targets.append(f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_numbat_without_preclassified_cells.tsv")
     if always_has_ref_cells:
         # infercna evaluation target (only runs with reference cells)
-        targets.append(f"results/{mat_specific_dataset}_output/evaluation/evaluation_infercna_with_preclassified_cells.tsv")
-        targets.append(f"results/{mat_specific_dataset}_output/evaluation/evaluation_infercna_hg19_with_preclassified_cells.tsv")
-        targets.append(f"results/{mat_specific_dataset}_output/evaluation/evaluation_infercnv_with_preclassified_cells.tsv")
-        targets.append(f"results/{mat_specific_dataset}_output/evaluation/evaluation_infercnv_hg19_with_preclassified_cells.tsv")
-        targets.append(f"results/{mat_specific_dataset}_output/evaluation/evaluation_copykat_with_preclassified_cells.tsv")
-        targets.append(f"results/{mat_specific_dataset}_output/evaluation/evaluation_scevan_with_preclassified_cells.tsv")
-        targets.append(f"results/{mat_specific_dataset}_output/evaluation/evaluation_CONICSmat_with_preclassified_cells.tsv")
+        targets.append(f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercna_with_preclassified_cells.tsv")
+        targets.append(f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercna_hg19_with_preclassified_cells.tsv")
+        targets.append(f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercnv_with_preclassified_cells.tsv")
+        targets.append(f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercnv_hg19_with_preclassified_cells.tsv")
+        targets.append(f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_copykat_with_preclassified_cells.tsv")
+        targets.append(f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_scevan_with_preclassified_cells.tsv")
+        targets.append(f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_CONICSmat_with_preclassified_cells.tsv")
         if MODE == "fastq" or MODE == "bam":
-            targets.append(f"results/{mat_specific_dataset}_output/evaluation/evaluation_casper_with_preclassified_cells.tsv")
-            targets.append(f"results/{mat_specific_dataset}_output/evaluation/evaluation_numbat_with_preclassified_cells.tsv")
+            targets.append(f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_casper_with_preclassified_cells.tsv")
+            targets.append(f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_numbat_with_preclassified_cells.tsv")
+    targets.append(f"results/{mat_specific_dataset}_output/evaluation/dataset_metrics.tsv")
     return targets
 
 rule all:
@@ -1025,7 +1026,7 @@ if 1:
             gene_pos = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
         output:
-            results = f"results/{mat_specific_dataset}_output/evaluation/evaluation_infercna_hg19_without_preclassified_cells.tsv"
+            results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercna_hg19_without_preclassified_cells.tsv"
         log:
             f"logs/{mat_specific_dataset}/{mat_specific_dataset}_evaluate_infercna_hg19_without_preclassified_cells.log"
         benchmark:
@@ -1071,7 +1072,7 @@ if 1:
             gene_pos = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
         output:
-            results = f"results/{mat_specific_dataset}_output/evaluation/evaluation_infercna_without_preclassified_cells.tsv"
+            results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercna_without_preclassified_cells.tsv"
         log:
             f"logs/{mat_specific_dataset}/{mat_specific_dataset}_evaluate_infercna_without_preclassified_cells.log"
         benchmark:
@@ -1120,7 +1121,7 @@ if always_has_ref_cells:
             gene_pos = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
         output:
-            results = f"results/{mat_specific_dataset}_output/evaluation/evaluation_infercna_hg19_with_preclassified_cells.tsv"
+            results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercna_hg19_with_preclassified_cells.tsv"
         log:
             f"logs/{mat_specific_dataset}/{mat_specific_dataset}_evaluate_infercna_hg19_with_preclassified_cells.log"
         benchmark:
@@ -1168,7 +1169,7 @@ if always_has_ref_cells:
             gene_pos = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
         output:
-            results = f"results/{mat_specific_dataset}_output/evaluation/evaluation_infercna_with_preclassified_cells.tsv"
+            results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercna_with_preclassified_cells.tsv"
         log:
             f"logs/{mat_specific_dataset}/{mat_specific_dataset}_evaluate_infercna_with_preclassified_cells.log"
         benchmark:
@@ -1232,7 +1233,7 @@ if always_has_ref_cells:
             gene_pos = GENE_POS_FILE_HG19,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
         output:
-            results = f"results/{mat_specific_dataset}_output/evaluation/evaluation_infercnv_hg19_with_preclassified_cells.tsv"
+            results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercnv_hg19_with_preclassified_cells.tsv"
         log:
             f"logs/{mat_specific_dataset}/{mat_specific_dataset}_evaluate_infercnv_with_preclassified_cells_hg19.log"
         benchmark:
@@ -1283,7 +1284,7 @@ if always_has_ref_cells:
             gene_pos = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
         output:
-            results = f"results/{mat_specific_dataset}_output/evaluation/evaluation_infercnv_with_preclassified_cells.tsv"
+            results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercnv_with_preclassified_cells.tsv"
         log:
             f"logs/{mat_specific_dataset}/{mat_specific_dataset}_evaluate_infercnv_with_preclassified_cells.log"
         benchmark:
@@ -1337,7 +1338,7 @@ if 1:
             gene_pos = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
         output:
-            results = f"results/{mat_specific_dataset}_output/evaluation/evaluation_copykat_cellline_without_preclassified_cells.tsv"
+            results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_copykat_cellline_without_preclassified_cells.tsv"
         log:
             f"logs/{mat_specific_dataset}/{mat_specific_dataset}_evaluate_copykat_cellline_without_preclassified_cells.log"
         benchmark:
@@ -1389,7 +1390,7 @@ if 1:
             gene_pos = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
         output:
-            results = f"results/{mat_specific_dataset}_output/evaluation/evaluation_copykat_without_preclassified_cells.tsv"
+            results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_copykat_without_preclassified_cells.tsv"
         log:
             f"logs/{mat_specific_dataset}/{mat_specific_dataset}_evaluate_copykat_without_preclassified_cells.log"
         benchmark:
@@ -1445,7 +1446,7 @@ if always_has_ref_cells:
             gene_pos = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
         output:
-            results = f"results/{mat_specific_dataset}_output/evaluation/evaluation_copykat_with_preclassified_cells.tsv"
+            results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_copykat_with_preclassified_cells.tsv"
         log:
             f"logs/{mat_specific_dataset}/{mat_specific_dataset}_evaluate_copykat_with_preclassified_cells.log"
         benchmark:
@@ -1506,7 +1507,7 @@ if 1:
             annofile = f"results/{mat_specific_dataset}_output/scevan_unknown_ref/output/{dataset}_count_mtx_annot.RData",
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
         output:
-            results = f"results/{mat_specific_dataset}_output/evaluation/evaluation_scevan_without_preclassified_cells.tsv"
+            results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_scevan_without_preclassified_cells.tsv"
         log:
             f"logs/{mat_specific_dataset}/{mat_specific_dataset}_evaluate_scevan_without_preclassified_cells.log"
         benchmark:
@@ -1566,7 +1567,7 @@ if always_has_ref_cells:
             annofile = f"results/{mat_specific_dataset}_output/scevan_known_ref/output/{dataset}_count_mtx_annot.RData",
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
         output:
-            results = f"results/{mat_specific_dataset}_output/evaluation/evaluation_scevan_with_preclassified_cells.tsv"
+            results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_scevan_with_preclassified_cells.tsv"
         log:
             f"logs/{mat_specific_dataset}/{mat_specific_dataset}_evaluate_scevan_with_preclassified_cells.log"
         benchmark:
@@ -1648,7 +1649,7 @@ if 1:
             gene_pos = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
         output:
-            results = f"results/{mat_specific_dataset}_output/evaluation/evaluation_CONICSmat_without_preclassified_cells.tsv"
+            results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_CONICSmat_without_preclassified_cells.tsv"
         log:
             f"logs/{mat_specific_dataset}/{mat_specific_dataset}_evaluate_CONICSmat_with_preclassified_cells.log"
         benchmark:
@@ -1709,7 +1710,7 @@ if always_has_ref_cells:
             gene_pos = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
         output:
-            results = f"results/{mat_specific_dataset}_output/evaluation/evaluation_CONICSmat_with_preclassified_cells.tsv"
+            results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_CONICSmat_with_preclassified_cells.tsv"
         log:
             f"logs/{mat_specific_dataset}/{mat_specific_dataset}_evaluate_CONICSmat_with_preclassified_cells.log"
         benchmark:
@@ -1842,7 +1843,7 @@ if (MODE == "fastq" or MODE == "bam") and always_has_ref_cells:
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
             chrom_pos         = CHROM_ARM_POS,
         output:
-            results = f"results/{mat_specific_dataset}_output/evaluation/evaluation_casper_with_preclassified_cells.tsv"
+            results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_casper_with_preclassified_cells.tsv"
         log:
             f"logs/{mat_specific_dataset}/{mat_specific_dataset}_evaluate_casper_with_preclassified_cells.log"
         benchmark:
@@ -1953,7 +1954,7 @@ if MODE == "fastq" or MODE == "bam":
             gene_pos     = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
         output:
-            results = f"results/{mat_specific_dataset}_output/evaluation/evaluation_numbat_without_preclassified_cells.tsv"
+            results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_numbat_without_preclassified_cells.tsv"
         log:
             f"logs/{mat_specific_dataset}/{mat_specific_dataset}_evaluate_numbat_without_preclassified_cells.log"
         benchmark:
@@ -2007,7 +2008,7 @@ if (MODE == "fastq" or MODE == "bam") and always_has_ref_cells:
             gene_pos     = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
         output:
-            results = f"results/{mat_specific_dataset}_output/evaluation/evaluation_numbat_with_preclassified_cells.tsv"
+            results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_numbat_with_preclassified_cells.tsv"
         log:
             f"logs/{mat_specific_dataset}/{mat_specific_dataset}_evaluate_numbat_with_preclassified_cells.log"
         benchmark:
@@ -2027,4 +2028,24 @@ if (MODE == "fastq" or MODE == "bam") and always_has_ref_cells:
                 --output {output.results} \
                 2>{log}
             """
+
+rule compute_dataset_metrics:
+    output:
+        f"results/{mat_specific_dataset}_output/evaluation/dataset_metrics.tsv",
+        f"results/{mat_specific_dataset}_output/evaluation/per_cell_metrics.tsv",
+        f"results/{mat_specific_dataset}_output/evaluation/cnv_event_sizes.tsv",
+    input:
+        # make this depend on whatever Ginkgo target already exists so it
+        # runs only after the ground truth is built, e.g.:
+        ginkgo_done = f"results/{dataset}_ginkgo/output/SegCopy",
+    params:
+        config_paths = workflow.configfiles,        # template + dataset YAML
+        ginkgo_dir   = f"results/{dataset}_ginkgo/output",   # dir holding SegCopy
+        bam_prefix   = config.get("_scWGS_scRNA_prefix", ""),
+        samtools     = "samtools",
+        with_coverage= False,   # set True for true scWGS mean depth (slow)
+        skip_bams    = False,   # set True to skip all BAM I/O
+        segcopy_name = "SegCopy",
+    script:
+        "scripts/compute_dataset_metrics.py"
 
