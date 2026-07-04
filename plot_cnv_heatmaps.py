@@ -1,14 +1,36 @@
 #!/usr/bin/env python3
 
 """
-Plot heatmaps of CNV caller benchmarking results.
+Plot heatmaps of CNV caller benchmarking results, and emit a single per-dataset
+summary table.
 
 Each heatmap corresponds to one performance metric.
 Rows   = datasets  (e.g. BCIS106T_chip1_SAMN48409192_SRR33511671)
 Columns = methods   (e.g. copykat_predict, conicsmat, numbat, …)
 
 Cell colour  = mean value across all cells in that dataset×method pair.
-Cell text    = "mean\n(IQR: Q1–Q3)"  showing both central tendency and spread.
+Cell text    = "mean ± sd".
+
+Summary table
+-------------
+Alongside the figures the script writes ONE combined TSV, dataset_summary.tsv,
+with one row per dataset and exactly these columns:
+
+    dataset
+    n_cells_total
+    tumor_purity_cellfraction__dna
+    tumor_sample_ploidy_mean__dna
+    scRNA_reads_per_cell_mean
+    scRNA_reads_per_cell_median
+    scWGS_reads_per_cell_mean
+    scWGS_reads_per_cell_median
+
+The values are taken from each dataset's own dataset_metrics.tsv (written by
+compute_dataset_metrics.py). Those file paths are NOT passed in — they are
+inferred from --input_glob: for every evaluation directory the glob touches, the
+sibling file <evaluation_dir>/dataset_metrics.tsv is read. Columns absent from a
+given file become empty cells; a dataset whose dataset_metrics.tsv is missing is
+skipped with a warning.
 
 Usage
 -----
@@ -16,7 +38,8 @@ Usage
         --input_glob "/nfs/wxz/zxf/cnv/copy-num-bench-scwgs-to-scrna/results/BCI*solo-genefull_output/evaluation/*.tsv" \
         --outdir ./heatmaps \
         [--metrics "Pearson Correlation Coefficient,CopyNumber gain F-score"] \
-        [--file_pattern "without_preclassified_cells"]
+        [--file_pattern "without_preclassified_cells"] \
+        [--summary_out ./heatmaps/dataset_summary.tsv]
 """
 
 import argparse
@@ -39,14 +62,45 @@ import seaborn as sns
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 # ---------------------------------------------------------------------------
+# Per-dataset summary table specification
+# ---------------------------------------------------------------------------
+# Columns are taken verbatim from each dataset's dataset_metrics.tsv. Order is
+# preserved in the output; a column missing from a given file becomes NaN.
+SUMMARY_COLUMNS = [
+    "dataset",
+    "n_cells_total",
+    "tumor_purity_cellfraction__dna",
+    "tumor_sample_ploidy_mean__dna",
+    "scRNA_reads_per_cell_mean",
+    "scRNA_reads_per_cell_median",
+    "scWGS_reads_per_cell_mean",
+    "scWGS_reads_per_cell_median",
+]
+# The per-dataset metrics file that lives next to the benchmark eval TSVs.
+DATASET_METRICS_BASENAME = "dataset_metrics.tsv"
+# Descriptive / non-benchmark files that share the evaluation directory and must
+# NOT be fed into the heatmap loader.
+NON_BENCHMARK_BASENAMES = {
+    DATASET_METRICS_BASENAME,
+    "per_cell_metrics.tsv",
+    "annotation_agreement.tsv",
+    "annotation_discordant_cells.tsv",
+    "cnv_event_sizes.tsv",
+    "dataset_summary.tsv",
+}
+
+
+# ---------------------------------------------------------------------------
 # 1. Parse arguments
 # ---------------------------------------------------------------------------
 def parse_args():
-    p = argparse.ArgumentParser(description="CNV benchmark heatmaps with dispersion")
+    p = argparse.ArgumentParser(description="CNV benchmark heatmaps with dispersion", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument(
         "--input_glob",
         default="/nfs/wxz/zxf/cnv/copy-num-bench-scwgs-to-scrna/results/*solo-genefull_output/evaluation/*.tsv",
-        help="Glob pattern for evaluation TSV files",
+        help="Glob pattern for evaluation TSV files. The per-dataset "
+             "dataset_metrics.tsv files used for the summary table are inferred "
+             "from the evaluation directories this glob matches.",
     )
     p.add_argument("--outdir", default="./heatmaps", help="Output directory for figures")
     p.add_argument(
@@ -59,6 +113,12 @@ def parse_args():
         default=None,
         help="Only include files whose basename contains this substring "
              "(e.g. 'without_preclassified_cells'). Default: include all.",
+    )
+    p.add_argument(
+        "--summary_out",
+        default=None,
+        help="Path for the single combined summary TSV. "
+             "Default: <outdir>/dataset_summary.tsv",
     )
     p.add_argument(
         "--fmt", default="pdf", help="Output figure format: pdf, png, svg (default: pdf)"
@@ -87,15 +147,17 @@ def dataset_from_path(filepath: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 3. Load and concatenate all TSV files
+# 3. Load and concatenate all TSV files (for the heatmaps)
 # ---------------------------------------------------------------------------
-def load_all(glob_pattern: str, file_pattern: str | None) -> pd.DataFrame:
+def load_all(glob_pattern: str, file_pattern) -> pd.DataFrame:
     files = sorted(glob.glob(glob_pattern, recursive=True))
     if not files:
         sys.exit(f"No files matched: {glob_pattern}")
 
     # Skip cell_classification files — different schema
     files = [f for f in files if "cell_classification" not in os.path.basename(f)]
+    # Skip the descriptive / summary files — different schema
+    files = [f for f in files if os.path.basename(f) not in NON_BENCHMARK_BASENAMES]
 
     if file_pattern:
         files = [f for f in files if file_pattern in os.path.basename(f)]
@@ -116,12 +178,27 @@ def load_all(glob_pattern: str, file_pattern: str | None) -> pd.DataFrame:
 
         df["dataset"] = dataset_from_path(fp)
         df["source_file"] = os.path.basename(fp)
-        celltypes = list(set(df['celltype']))
-        if 1 == len(celltypes):
-            df['final_celltype'] = df['celltype_dna']
+
+        # Resolve a per-row 'final_celltype'.
+        #   - If the file distinguishes >1 celltype, trust its per-row 'celltype'.
+        #   - If there is only one (or none), fall back to the DNA-derived label
+        #     'celltype_dna' when present.
+        # Both columns are optional in some eval files, so every access is guarded
+        # rather than assumed (a missing column previously raised KeyError, and a
+        # file with 3+ celltypes tripped an assert).
+        has_celltype = "celltype" in df.columns
+        has_celltype_dna = "celltype_dna" in df.columns
+        n_celltypes = df["celltype"].nunique(dropna=True) if has_celltype else 0
+
+        if n_celltypes > 1 and has_celltype:
+            df["final_celltype"] = df["celltype"]
+        elif has_celltype_dna:
+            df["final_celltype"] = df["celltype_dna"]
+        elif has_celltype:
+            df["final_celltype"] = df["celltype"]
         else:
-            assert 2 == len(celltypes), f'The cell-types {celltypes} are invalid!'
-            df['final_celltype'] = df['celltype']
+            df["final_celltype"] = np.nan
+
         frames.append(df)
 
     if not frames:
@@ -137,6 +214,111 @@ def load_all(glob_pattern: str, file_pattern: str | None) -> pd.DataFrame:
     print(f"  {len(data)} rows, {data['dataset'].nunique()} datasets, "
           f"{data['method'].nunique()} methods, {data['metric'].nunique()} metrics")
     return data
+
+
+# ---------------------------------------------------------------------------
+# 3b. Single combined summary table (inferred dataset_metrics.tsv files)
+# ---------------------------------------------------------------------------
+def infer_metrics_files(input_glob: str):
+    """Infer the per-dataset dataset_metrics.tsv paths from --input_glob.
+
+    The benchmark eval TSVs live in each dataset's evaluation/ directory; the
+    matching dataset_metrics.tsv is the sibling file in that same directory.
+    We expand the glob, collect the unique parent directories, and look for
+    dataset_metrics.tsv in each. Returns a list ordered by dataset name.
+    """
+    matches = sorted(glob.glob(input_glob, recursive=True))
+    eval_dirs = []
+    seen_dirs = set()
+    for m in matches:
+        d = os.path.dirname(m)
+        if d not in seen_dirs:
+            seen_dirs.add(d)
+            eval_dirs.append(d)
+
+    # If the glob itself pointed straight at dataset_metrics.tsv files, honour those.
+    direct = [m for m in matches
+              if os.path.basename(m) == DATASET_METRICS_BASENAME]
+
+    metrics_files = list(direct)
+    for d in eval_dirs:
+        cand = os.path.join(d, DATASET_METRICS_BASENAME)
+        if os.path.exists(cand):
+            metrics_files.append(cand)
+
+    # De-duplicate (keep first occurrence) and drop non-existent.
+    seen, out = set(), []
+    for f in metrics_files:
+        if f not in seen and os.path.exists(f):
+            seen.add(f)
+            out.append(f)
+    # Order deterministically by inferred dataset name, then path.
+    out.sort(key=lambda f: (dataset_from_path(f), f))
+    return out
+
+
+def build_dataset_summary(metrics_files) -> pd.DataFrame:
+    """Read each dataset_metrics.tsv and select SUMMARY_COLUMNS into one table.
+
+    - Missing columns are filled with NaN (kept in the requested order).
+    - The `dataset` column is recovered from the file path if absent/blank.
+    - dataset_metrics.tsv holds one row per dataset; rows are concatenated and
+      sorted by dataset name. Duplicate datasets (same name) are collapsed,
+      keeping the first non-null value per column.
+    """
+    rows = []
+    for fp in metrics_files:
+        try:
+            df = pd.read_csv(fp, sep="\t")
+        except Exception as e:
+            print(f"  [summary] SKIP {fp}: {e}")
+            continue
+
+        if df.empty:
+            df = pd.DataFrame([{}])
+
+        if "dataset" not in df.columns or df["dataset"].isna().all():
+            df["dataset"] = dataset_from_path(fp)
+
+        df = df.reindex(columns=SUMMARY_COLUMNS)
+        if df["dataset"].isna().all():
+            df["dataset"] = dataset_from_path(fp)
+
+        rows.append(df)
+
+    if not rows:
+        return pd.DataFrame(columns=SUMMARY_COLUMNS)
+
+    out = pd.concat(rows, ignore_index=True)
+
+    # Collapse any accidental duplicate dataset rows: first non-null wins.
+    if out["dataset"].duplicated().any():
+        out = (out.groupby("dataset", as_index=False, sort=False)
+                  .agg(lambda s: s.dropna().iloc[0] if s.notna().any() else np.nan))
+
+    out = out.sort_values("dataset", kind="stable").reset_index(drop=True)
+    return out[SUMMARY_COLUMNS]
+
+
+def write_dataset_summary(input_glob: str, summary_out: str) -> pd.DataFrame:
+    """Infer inputs, build the single combined table, and write it to disk.
+
+    The file is always written (header-only if no dataset_metrics.tsv is found),
+    so the output reliably exists for downstream steps.
+    """
+    metrics_files = infer_metrics_files(input_glob)
+    if metrics_files:
+        print(f"Building summary from {len(metrics_files)} "
+              f"{DATASET_METRICS_BASENAME} file(s) inferred from --input_glob …")
+    else:
+        print(f"[summary] WARNING: no {DATASET_METRICS_BASENAME} found next to the "
+              f"files matched by {input_glob!r}; writing header-only summary.")
+
+    summary = build_dataset_summary(metrics_files)
+    os.makedirs(os.path.dirname(summary_out) or ".", exist_ok=True)
+    summary.to_csv(summary_out, sep="\t", index=False, na_rep='nan')
+    print(f"Dataset summary ({len(summary)} dataset(s)) → {summary_out}")
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -193,13 +375,7 @@ def plot_heatmap(agg: pd.DataFrame, metric: str, outdir: str, fmt: str, dpi: int
     Draw one figure per metric.
 
     The heatmap cell is coloured by the mean value.
-    Inside each cell we annotate:
-        mean
-        IQR: [Q1, Q3]
-        n = count
-    A small "box-plot whisker" glyph is drawn inside each cell to visualise
-    the dispersion at a glance: a horizontal bar from Q1→Q3 with a tick at
-    the mean.
+    Inside each cell we annotate the mean ± sd.
     """
     sub = agg[agg["metric"] == metric].copy()
     if sub.empty:
@@ -255,7 +431,7 @@ def plot_heatmap(agg: pd.DataFrame, metric: str, outdir: str, fmt: str, dpi: int
             if np.isnan(m):
                 annot[i, j] = ""
             else:
-                # Compact annotation: mean ± sd with IQR
+                # Compact annotation: mean ± sd
                 annot[i, j] = (
                     f"{m:.2f} ±{sd:.2f}\n"
                     #f"[{q1:.2f},{q3:.2f}]"
@@ -296,7 +472,7 @@ def plot_heatmap(agg: pd.DataFrame, metric: str, outdir: str, fmt: str, dpi: int
     ax.set_ylabel("Dataset", fontsize=11)
     ax.tick_params(axis="x", rotation=20, labelsize=9)
     ax.tick_params(axis="y", rotation=0, labelsize=9)
-    
+
     '''
     # --- Draw mini IQR bars inside each cell ---
     # Map data range → cell coordinate [0,1] within each cell
@@ -394,6 +570,14 @@ def main():
     args = parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
+    # --- Single combined summary table ---
+    # Built first (and independently of the heatmap data) so it is produced even
+    # if the benchmark eval TSVs are unusable. The dataset_metrics.tsv inputs are
+    # inferred from --input_glob; no separate path argument is needed.
+    summary_out = args.summary_out or os.path.join(args.outdir, "dataset_summary.tsv")
+    write_dataset_summary(args.input_glob, summary_out)
+
+    # --- Heatmaps (original behaviour) ---
     data = load_all(args.input_glob, args.file_pattern)
     agg  = aggregate(data)
 
@@ -414,7 +598,7 @@ def main():
 
     # Also save the aggregated table as TSV for downstream use
     agg_path = os.path.join(args.outdir, "aggregated_results.tsv")
-    agg.to_csv(agg_path, sep="\t", index=False)
+    agg.to_csv(agg_path, sep="\t", index=False, na_rep='nan')
     print(f"\nAggregated data → {agg_path}")
     print("Done.")
 
