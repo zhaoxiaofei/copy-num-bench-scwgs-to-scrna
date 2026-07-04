@@ -5,35 +5,52 @@ compute_dataset_metrics.py
 Compute per-dataset descriptive / confounder metrics for the
 copy-num-bench-scwgs-to-scrna benchmark.
 
-For each dataset (= one YAML config) it produces five metrics:
+Two independent tumor/normal labelings are used, and every label-dependent metric
+is reported once per labeling, plus an agreement summary between the two:
 
-  1. Tumor purity        -> fraction of malignant cells (from config labels)
-  2. Sequencing depth    -> reads / cell and mean coverage, per modality (from BAMs)
-  3. CNV burden + event  -> fraction-of-genome-altered and segment-size
-     size distribution      distribution (from the Ginkgo SegCopy ground truth)
-  4. Tumor ploidy        -> mean integer copy number over tumor cells (Ginkgo)
-  5. Number of cells     -> scRNA cell count (from config; optional post-QC count)
+  1. "sample"  annotation  -- the author/config-provided labels
+                              data/{DATASET}_input/sample_annotation_1.txt
+                              (written by rule create_sample_annotation_1)
+  2. "dna"     annotation  -- labels inferred from the Ginkgo copy-number ground truth
+                              data/{dataset}_ginkgo_groundtruth/dna_cell_annotation.txt
+                              (written by separate_tumor_normal_from_ginkgo_segcopy.py)
 
-Design notes
-------------
-* Two metrics (purity, scRNA cell count) need only the merged config.
-* Two metrics (CNV burden / event sizes, ploidy) are read from the Ginkgo
-  `SegCopy` matrix that the pipeline already produces as ground truth.
-* One metric (depth) shells out to `samtools idxstats` (fast, needs .bai)
-  and optionally `samtools depth` for true mean coverage.
+Both files are 2-column, NO HEADER:  <sample_name>\t<tumor|reference>
+(reference == normal). Any label not in _REF_CELLTYPES is treated as tumor.
 
-The script runs either standalone (argparse) or from a Snakemake `script:`
-directive (it auto-detects the injected `snakemake` object).
+Metrics produced
+----------------
+Per labeling (suffixed __sample / __dna in the headline row):
+  * Tumor purity        -> fraction of malignant cells
+  * Tumor ploidy        -> mean integer CN over that labeling's tumor cells (Ginkgo)
+  * CNV burden (FGA)    -> mean fraction-of-genome-altered over tumor cells
+  * CNV event sizes     -> per-segment size distribution over tumor cells
 
-Outputs (written to --out-dir):
-  dataset_metrics.tsv   one summary row for the dataset (the headline table)
-  per_cell_metrics.tsv  one row per cell (depth, ploidy, CN burden)
-  cnv_event_sizes.tsv   one row per CNV segment (cell, chrom, size_bp, cn, class)
+Labeling-independent:
+  * Sequencing depth    -> reads / cell per modality, from the pipeline's *.bam.stats
+  * Number of cells     -> total and scRNA cell counts
+
+Agreement between the two labelings:
+  * confusion counts (tumor/tumor, tumor/ref, ref/tumor, ref/ref), Cohen's kappa,
+    and the list of discordant cells.
+
+Pipeline paths this script relies on (see snakemake_pipeline/new_workflow.snake):
+  scWGS / DNA BAM : results/{dataset}_bams/dna/{cell}_hg19.bam            (+ .bam.stats)
+  scRNA BAM       : results/{dataset}_bams/rna/all_cells_grch38_{cell}.bam (+ .bam.stats)
+  CNV ground truth: results/{dataset}_ginkgo/output/SegCopy_grch38.tsv
+
+Runs standalone (argparse) or from a Snakemake `script:` directive (auto-detected).
+
+Outputs (into --out-dir):
+  dataset_metrics.tsv             one headline row (metrics under both labelings)
+  per_cell_metrics.tsv            one row per cell (both labels, depth, ploidy, FGA)
+  cnv_event_sizes.tsv             one row per CNV segment, tagged with both labels
+  annotation_agreement.tsv        confusion / kappa summary
+  annotation_discordant_cells.tsv cells where the two labelings disagree
 """
 
 import argparse
 import os
-import subprocess
 import sys
 from collections import Counter
 
@@ -41,9 +58,36 @@ import numpy as np
 import pandas as pd
 import yaml
 
+# --------------------------------------------------------------------------- #
+# Celltype classification -- kept in sync with new_workflow.snake
+# --------------------------------------------------------------------------- #
+_REF_CELLTYPES = {
+    "n", "normal", "control", "ctrl", "reference", "ref",
+    "diploid", "bl", "lymphocyte", "lymphocite", "blood",
+}
+
+def _norm_cell_key(x):
+    return str(x).strip().replace('/', '.').replace('_', '.').replace('-', '.')
+
+def _is_ref_celltype(celltype):
+    """True if the celltype string denotes a normal/reference (diploid control) cell."""
+    return str(celltype).strip().lower() in _REF_CELLTYPES
+
+
+def _label_of(celltype):
+    """Normalise any celltype string to canonical 'reference' / 'tumor'."""
+    return "reference" if _is_ref_celltype(celltype) else "tumor"
+
+
+def _is_empty_fq(fq_value):
+    """Match the Snakefile's placeholder handling for absent FASTQ mates."""
+    if fq_value is None:
+        return True
+    return str(fq_value).strip() in ("", "-", ".")
+
 
 # --------------------------------------------------------------------------- #
-# Config parsing
+# Config + annotation parsing
 # --------------------------------------------------------------------------- #
 def load_config(config_paths):
     """Merge one or more YAML files (template + dataset config), last wins."""
@@ -55,167 +99,163 @@ def load_config(config_paths):
     return merged
 
 
-def parse_cells(config):
-    """Return a DataFrame of cells from cellname_celltype_scWGS_scRNA_tup_list.
+CONFIG_CELL_KEY = "cellname_celltype_DNAseqFQ1_DNAseqFQ2_RNAseqFQ1_RNAseqFQ2_tup_list"
 
-    Each entry is [cell_id, 'Tumor'/'Normal', scWGS_bam, scRNA_bam].
-    The placeholder string entry ('etc.') and malformed rows are dropped.
-    """
+
+def parse_cells(config):
+    """Return a DataFrame of cells from the 6-tuple FastQ-mode config list."""
     rows = []
-    for entry in config.get("cellname_celltype_scWGS_scRNA_tup_list", []):
-        if not isinstance(entry, (list, tuple)) or len(entry) < 4:
+    for entry in config.get(CONFIG_CELL_KEY, []):
+        if not isinstance(entry, (list, tuple)) or len(entry) < 6:
             continue
-        cell_id, celltype, scwgs_bam, scrna_bam = entry[:4]
+        cell_id, celltype, dna_fq1, dna_fq2, rna_fq1, rna_fq2 = entry[:6]
         rows.append(
             {
                 "cell_id": str(cell_id),
-                "celltype": str(celltype).strip().capitalize(),  # Tumor / Normal
-                "scwgs_bam": str(scwgs_bam) if scwgs_bam else "",
-                "scrna_bam": str(scrna_bam) if scrna_bam else "",
+                "config_celltype": str(celltype).strip(),
+                "has_dna_fq": not _is_empty_fq(dna_fq1),
+                "has_rna_fq": not _is_empty_fq(rna_fq1),
             }
         )
-    print(f'Parsed {rows}\nfrom the config\n{config}.')
     return pd.DataFrame(rows)
 
 
+def load_annotation(path, name):
+    """Load a 2-column, NO-HEADER annotation file: <sample_name>\\t<tumor|reference>.
+
+    Returns dict {sample_name: 'tumor'|'reference'}. Tab- or whitespace-delimited.
+    Unknown/blank labels are skipped with a warning. `name` is used only in messages.
+    """
+    if not path or not os.path.exists(path):
+        print(f"WARNING: {name} annotation not found: {path}", file=sys.stderr)
+        return {}
+    mapping = {}
+    with open(path) as fh:
+        for ln, line in enumerate(fh, 1):
+            line = line.rstrip("\n")
+            if not line.strip():
+                continue
+            parts = line.split("\t") if "\t" in line else line.split()
+            if len(parts) < 2:
+                print(f"WARNING: {name} annotation line {ln} has <2 columns; skipped",
+                      file=sys.stderr)
+                continue
+            sample1, label = parts[0].strip(), parts[1].strip()
+            sample = _norm_cell_key(sample1) # .replace('/', '.').replace('_', '.').replace('-', '.')
+            print(f'Processing file={path} sample1={sample1} sample={sample}')
+            assert sample not in mapping, f'{sample} is duplicated at {path}! Aborting!'
+            mapping[sample] = _label_of(label)
+    return mapping
+
 # --------------------------------------------------------------------------- #
-# Metric 1 + 5: purity and cell counts (config only)
+# Pipeline output BAM / stats paths (must match new_workflow.snake exactly)
 # --------------------------------------------------------------------------- #
-def purity_and_counts(cells):
-    is_tumor = cells["celltype"].str.lower().eq("tumor")
-    is_normal = cells["celltype"].str.lower().eq("normal")
-    n_tumor = int(is_tumor.sum())
-    n_normal = int(is_normal.sum())
-    n_total = n_tumor + n_normal
-    purity = n_tumor / n_total if n_total else np.nan
+def scwgs_bam_for(dataset, cell_id, results_prefix=""):
+    return os.path.join(results_prefix,
+                        f"results/{dataset}_bams/dna/{cell_id}_hg19.bam")
 
-    has_scrna = cells["scrna_bam"].str.len().gt(0)
-    n_scrna = int(has_scrna.sum())
-    n_scrna_tumor = int((has_scrna & is_tumor).sum())
 
-    return {
-        "n_cells_total": n_total,
-        "n_tumor_cells": n_tumor,
-        "n_normal_cells": n_normal,
-        "tumor_purity_cellfraction": round(purity, 4) if n_total else np.nan,
-        "n_cells_scRNA": n_scrna,
-        "n_cells_scRNA_tumor": n_scrna_tumor,
-    }
+def scrna_bam_for(dataset, cell_id, results_prefix=""):
+    return os.path.join(results_prefix,
+                        f"results/{dataset}_bams/rna/all_cells_grch38_{cell_id}.bam")
 
 
 # --------------------------------------------------------------------------- #
-# Metric 2: sequencing depth / reads per cell (BAMs)
+# Sequencing depth / reads per cell, from `*.bam.stats` (labeling-independent)
 # --------------------------------------------------------------------------- #
-def _resolve(prefix, bam):
-    if not bam:
-        return ""
-    return bam if os.path.isabs(bam) else os.path.join(prefix, bam)
+def parse_samtools_stats(stats_path):
+    """Parse the SN (summary numbers) block of a `samtools stats` output file."""
+    if not stats_path or not os.path.exists(stats_path):
+        if stats_path:
+            print(f"WARNING: stats file not found: {stats_path}", file=sys.stderr)
+        return {}
+    out = {}
+    with open(stats_path) as fh:
+        for line in fh:
+            if not line.startswith("SN\t"):
+                continue
+            payload = line[3:]
+            key, _, rest = payload.partition(":")
+            value = rest.split("\t")[1] if "\t" in rest else rest.strip()
+            out[key.strip()] = value.strip()
+    return out
 
 
-def bam_mapped_reads(bam_path, samtools="samtools"):
-    """Primary, mapped, non-dup, non-supplementary reads via idxstats (fast)."""
-    if not bam_path or not os.path.exists(bam_path):
-        return np.nan
+def _stats_int(stats, key):
     try:
-        out = subprocess.run(
-            [samtools, "idxstats", bam_path],
-            check=True, capture_output=True, text=True,
-        ).stdout
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return np.nan
-    mapped = 0
-    for line in out.strip().splitlines():
-        f = line.split("\t")
-        if len(f) >= 3 and f[0] != "*":
-            mapped += int(f[2])
-    return mapped
-
-
-def bam_mean_depth(bam_path, samtools="samtools"):
-    """Mean coverage over covered positions (samtools depth). Slow; optional."""
-    if not bam_path or not os.path.exists(bam_path):
-        return np.nan
-    try:
-        proc = subprocess.run(
-            f"{samtools} depth -a {bam_path} "
-            "| awk '{s+=$3; n++} END{if(n>0) print s/n; else print 0}'",
-            shell=True, check=True, capture_output=True, text=True,
-        )
-        return float(proc.stdout.strip() or "nan")
-    except (subprocess.CalledProcessError, ValueError):
+        return int(stats[key])
+    except (KeyError, ValueError):
         return np.nan
 
 
-def depth_per_cell(cells, prefix, samtools="samtools", with_coverage=False):
+def depth_per_cell(cells, dataset, results_prefix=""):
     recs = []
     for _, c in cells.iterrows():
-        wgs = _resolve(prefix, c["scwgs_bam"])
-        rna = _resolve(prefix, c["scrna_bam"])
-        rec = {
-            "cell_id": c["cell_id"],
-            "scWGS_reads": bam_mapped_reads(wgs, samtools),
-            "scRNA_reads": bam_mapped_reads(rna, samtools),
-        }
-        if with_coverage:
-            rec["scWGS_mean_depth"] = bam_mean_depth(wgs, samtools)
-        recs.append(rec)
+        cid = c["cell_id"]
+        d = parse_samtools_stats(scwgs_bam_for(dataset, cid, results_prefix) + ".stats")
+        r = parse_samtools_stats(scrna_bam_for(dataset, cid, results_prefix) + ".stats")
+        recs.append({
+            "cell_id": cid,
+            "scWGS_total_reads": _stats_int(d, "raw total sequences"),
+            "scWGS_reads_mapped": _stats_int(d, "reads mapped"),
+            "scWGS_error_rate": float(d["error rate"]) if "error rate" in d else np.nan,
+            "scRNA_total_reads": _stats_int(r, "raw total sequences"),
+            "scRNA_reads_mapped": _stats_int(r, "reads mapped"),
+        })
     return pd.DataFrame(recs)
 
 
 # --------------------------------------------------------------------------- #
-# Metrics 3 + 4: CNV burden, event-size distribution, ploidy (Ginkgo SegCopy)
+# Per-cell CNV profile (ploidy, FGA, events) from Ginkgo SegCopy_grch38
+# This is labeling-INDEPENDENT; tumor/normal is applied later when aggregating.
 # --------------------------------------------------------------------------- #
-def load_segcopy(ginkgo_dir, segcopy_name="SegCopy"):
-    """Ginkgo SegCopy: columns CHR, START, END, then one int-CN column per cell."""
-    path = os.path.join(ginkgo_dir, segcopy_name)
-    if not os.path.exists(path):
+def load_segcopy(segcopy_path):
+    if not segcopy_path or not os.path.exists(segcopy_path):
         raise FileNotFoundError(
-            f"Ginkgo SegCopy not found at {path}. "
-            "Point --ginkgo-dir at the Ginkgo output for this dataset."
+            f"SegCopy ground truth not found at {segcopy_path!r}. "
+            "Point --segcopy at results/<dataset>_ginkgo/output/SegCopy_grch38.tsv."
         )
-    df = pd.read_csv(path, sep="\t")
-    # Normalise the first three column names (Ginkgo uses CHR/START/END).
+    df = pd.read_csv(segcopy_path, sep=r"\s+", engine="python")
     df = df.rename(columns={df.columns[0]: "CHR",
                             df.columns[1]: "START",
                             df.columns[2]: "END"})
+    df["CHR"] = df["CHR"].astype(str)
+    df["START"] = pd.to_numeric(df["START"], errors="coerce")
+    df["END"] = pd.to_numeric(df["END"], errors="coerce")
     return df
 
 
-def cnv_metrics_from_segcopy(segcopy, tumor_cells, focal_max_bp=3_000_000):
-    """Per-cell ploidy, fraction-of-genome-altered, and CNV segments.
+def cnv_profile_from_segcopy(segcopy, focal_max_bp=3_000_000):
+    """Per-cell ploidy + FGA, and a per-segment events table. No tumor/normal here."""
+    bin_len = (segcopy["END"] - segcopy["START"]).to_numpy(dtype=float)
+    genome_len = float(np.nansum(bin_len))
 
-    Baseline (neutral) copy number per cell = its modal integer CN.
-    Altered bin = CN != baseline. FGA weights bins by genomic length.
-    Events = maximal runs of identical altered CN within a chromosome.
-    """
-    bin_len = (segcopy["END"] - segcopy["START"]).to_numpy()
-    genome_len = float(bin_len.sum())
     chrom = segcopy["CHR"].to_numpy()
     start = segcopy["START"].to_numpy()
     end = segcopy["END"].to_numpy()
 
     cell_cols = [c for c in segcopy.columns if c not in ("CHR", "START", "END")]
-    tumor_set = set(tumor_cells)
 
     per_cell = []
     events = []
+
     for col in cell_cols:
-        cn = segcopy[col].to_numpy()
+        cn = pd.to_numeric(segcopy[col], errors="coerce").to_numpy()
         if np.all(np.isnan(cn)):
             continue
+
         baseline = Counter(cn[~np.isnan(cn)]).most_common(1)[0][0]
-        altered = cn != baseline
-        fga = float(bin_len[altered].sum() / genome_len) if genome_len else np.nan
+        altered = (cn != baseline) & ~np.isnan(cn)
+        fga = float(np.nansum(bin_len[altered]) / genome_len) if genome_len else np.nan
         ploidy = float(np.nanmean(cn))
+
         per_cell.append({
-            "cell_id": col,
-            "is_tumor": col in tumor_set,
+            "cell_id": str(col),
             "ploidy_meanCN": round(ploidy, 4),
             "baseline_CN": int(baseline),
-            "frac_genome_altered": round(fga, 4),
+            "frac_genome_altered": round(fga, 4) if not np.isnan(fga) else np.nan,
         })
 
-        # run-length encode events within each chromosome
         for ch in pd.unique(chrom):
             idx = np.where(chrom == ch)[0]
             if idx.size == 0:
@@ -230,8 +270,7 @@ def cnv_metrics_from_segcopy(segcopy, tumor_cells, focal_max_bp=3_000_000):
                         e_bp = int(end[idx[i - 1]])
                         size = e_bp - s_bp
                         events.append({
-                            "cell_id": col,
-                            "is_tumor": col in tumor_set,
+                            "cell_id": str(col),
                             "chrom": ch,
                             "start": s_bp,
                             "end": e_bp,
@@ -242,131 +281,304 @@ def cnv_metrics_from_segcopy(segcopy, tumor_cells, focal_max_bp=3_000_000):
                         })
                     seg_start = i
 
-    per_cell_df = pd.DataFrame(per_cell)
-    events_df = pd.DataFrame(events)
-    return per_cell_df, events_df
+    return pd.DataFrame(per_cell), pd.DataFrame(events)
+
+
+# --------------------------------------------------------------------------- #
+# Aggregation helpers
+# --------------------------------------------------------------------------- #
+def _safe_mean(series):
+    arr = pd.to_numeric(series, errors="coerce").to_numpy(dtype=float)
+    return float(np.nanmean(arr)) if np.any(~np.isnan(arr)) else np.nan
+
+
+def _safe_median(series):
+    arr = pd.to_numeric(series, errors="coerce").to_numpy(dtype=float)
+    return float(np.nanmedian(arr)) if np.any(~np.isnan(arr)) else np.nan
+
+
+def _round(x, n):
+    if x is None or (isinstance(x, float) and np.isnan(x)):
+        return np.nan
+    return round(x, n)
+
+
+def purity_counts_for_labeling(cells, label_col):
+    """Purity + cell counts under one labeling column ('tumor'/'reference')."""
+    lab = cells[label_col].fillna("")
+    is_tumor = lab.eq("tumor")
+    is_ref = lab.eq("reference")
+    n_tumor = int(is_tumor.sum())
+    n_ref = int(is_ref.sum())
+    n_lab = n_tumor + n_ref
+    purity = n_tumor / n_lab if n_lab else np.nan
+    n_rna_tumor = int((cells["has_rna_fq"] & is_tumor).sum())
+    return {
+        "n_tumor_cells": n_tumor,
+        "n_normal_cells": n_ref,
+        "n_labeled_cells": n_lab,
+        "tumor_purity_cellfraction": _round(purity, 4),
+        "n_cells_scRNA_tumor": n_rna_tumor,
+    }
+
+
+def cnv_summary_for_labeling(cells, label_col, cnv_cell_df, events_df,
+                             focal_max_bp=3_000_000):
+    """Ploidy / FGA / event-size summary over the tumor cells of one labeling."""
+    out = {}
+    tumor_ids = set(cells.loc[cells[label_col].eq("tumor"), "cell_id"].astype(str))
+
+    if not cnv_cell_df.empty:
+        sub = cnv_cell_df[cnv_cell_df["cell_id"].astype(str).isin(tumor_ids)]
+        ref = sub if not sub.empty else cnv_cell_df  # fall back if none labeled tumor
+        out["tumor_sample_ploidy_mean"] = _round(_safe_mean(ref["ploidy_meanCN"]), 3)
+        out["cnv_burden_FGA_mean"] = _round(_safe_mean(ref["frac_genome_altered"]), 4)
+
+    if not events_df.empty:
+        sub = events_df[events_df["cell_id"].astype(str).isin(tumor_ids)]
+        ref = sub if not sub.empty else events_df
+        if not ref.empty:
+            out["n_cnv_events_per_tumor_cell_mean"] = _round(
+                float(ref.groupby("cell_id").size().mean()), 2)
+            med = _safe_median(ref["size_bp"])
+            out["cnv_event_size_bp_median"] = int(med) if not np.isnan(med) else np.nan
+            out["frac_events_focal"] = _round(float((ref["class"] == "focal").mean()), 4)
+            out["frac_events_broad"] = _round(float((ref["class"] == "broad").mean()), 4)
+    return out
+
+
+def cohen_kappa(labels_a, labels_b):
+    """Cohen's kappa for two equal-length lists of categorical labels."""
+    n = len(labels_a)
+    if n == 0:
+        return np.nan
+    cats = sorted(set(labels_a) | set(labels_b))
+    idx = {c: i for i, c in enumerate(cats)}
+    k = len(cats)
+    m = np.zeros((k, k), dtype=float)
+    for a, b in zip(labels_a, labels_b):
+        m[idx[a], idx[b]] += 1
+    po = np.trace(m) / n
+    row = m.sum(axis=1) / n
+    col = m.sum(axis=0) / n
+    pe = float(np.sum(row * col))
+    if pe == 1.0:
+        return 1.0
+    return (po - pe) / (1.0 - pe)
+
+
+def annotation_agreement(cells):
+    """Confusion counts + kappa + discordant cells between the two labelings.
+
+    Only cells present (non-null) in BOTH labelings are compared.
+    Returns (summary_dict, discordant_dataframe).
+    """
+    both = cells.dropna(subset=["label_sample", "label_dna"])
+
+    def cnt(x, y):
+        return int(((both["label_sample"] == x) & (both["label_dna"] == y)).sum())
+
+    tt, tr = cnt("tumor", "tumor"), cnt("tumor", "reference")
+    rt, rr = cnt("reference", "tumor"), cnt("reference", "reference")
+    n = len(both)
+    concordant = tt + rr
+    summary = {
+        "n_cells_compared": n,
+        "sampleTumor_dnaTumor": tt,
+        "sampleTumor_dnaReference": tr,
+        "sampleReference_dnaTumor": rt,
+        "sampleReference_dnaReference": rr,
+        "n_concordant": concordant,
+        "n_discordant": n - concordant,
+        "frac_concordant": _round(concordant / n, 4) if n else np.nan,
+        "cohen_kappa": _round(cohen_kappa(both["label_sample"].tolist(),
+                                          both["label_dna"].tolist()), 4),
+    }
+    disc = both[both["label_sample"] != both["label_dna"]][
+        ["cell_id", "config_celltype", "label_sample", "label_dna"]
+    ].copy()
+    return summary, disc
 
 
 # --------------------------------------------------------------------------- #
 # Assembly
 # --------------------------------------------------------------------------- #
-def summarise(dataset, counts, depth_df, cnv_cell_df, events_df):
+def build_headline(dataset, base_counts, depth_df, cells, cnv_cell_df, events_df,
+                   focal_max_bp=3_000_000):
+    """One wide row: shared metrics + per-labeling metrics suffixed __sample / __dna."""
     row = {"dataset": dataset}
-    row.update(counts)
+    row.update(base_counts)
 
     if not depth_df.empty:
-        row["scRNA_reads_per_cell_mean"] = round(np.nanmean(depth_df["scRNA_reads"]), 1)
-        row["scRNA_reads_per_cell_median"] = np.nanmedian(depth_df["scRNA_reads"])
-        row["scWGS_reads_per_cell_mean"] = round(np.nanmean(depth_df["scWGS_reads"]), 1)
-        if "scWGS_mean_depth" in depth_df:
-            row["scWGS_mean_depth"] = round(np.nanmean(depth_df["scWGS_mean_depth"]), 4)
+        row["scRNA_reads_per_cell_mean"] = _round(_safe_mean(depth_df["scRNA_reads_mapped"]), 1)
+        row["scRNA_reads_per_cell_median"] = _safe_median(depth_df["scRNA_reads_mapped"])
+        row["scWGS_reads_per_cell_mean"] = _round(_safe_mean(depth_df["scWGS_reads_mapped"]), 1)
+        row["scWGS_reads_per_cell_median"] = _safe_median(depth_df["scWGS_reads_mapped"])
+        if "scWGS_error_rate" in depth_df:
+            row["scWGS_error_rate_mean"] = _round(_safe_mean(depth_df["scWGS_error_rate"]), 5)
 
-    if not cnv_cell_df.empty:
-        tum = cnv_cell_df[cnv_cell_df["is_tumor"]]
-        ref = tum if not tum.empty else cnv_cell_df
-        row["tumor_ploidy_mean"] = round(float(ref["ploidy_meanCN"].mean()), 3)
-        row["cnv_burden_FGA_mean"] = round(float(ref["frac_genome_altered"].mean()), 4)
-
-    if not events_df.empty:
-        tev = events_df[events_df["is_tumor"]]
-        ref = tev if not tev.empty else events_df
-        row["n_cnv_events_per_tumor_cell_mean"] = round(
-            ref.groupby("cell_id").size().mean(), 2)
-        row["cnv_event_size_bp_median"] = int(ref["size_bp"].median())
-        row["frac_events_focal"] = round((ref["class"] == "focal").mean(), 4)
-        row["frac_events_broad"] = round((ref["class"] == "broad").mean(), 4)
+    for tag, col in (("sample", "label_sample"), ("dna", "label_dna")):
+        block = {}
+        block.update(purity_counts_for_labeling(cells, col))
+        block.update(cnv_summary_for_labeling(cells, col, cnv_cell_df, events_df,
+                                              focal_max_bp=focal_max_bp))
+        for k, v in block.items():
+            row[f"{k}__{tag}"] = v
 
     return pd.DataFrame([row])
 
 
-def run(config_paths, ginkgo_dir, out_dir, bam_prefix=None,
-        samtools="samtools", with_coverage=False, skip_bams=False,
-        segcopy_name="SegCopy"):
+def run(config_paths, segcopy_path, out_dir,
+        sample_annotation, dna_annotation,
+        dataset=None, results_prefix="", skip_bams=False,
+        focal_max_bp=3_000_000):
+    out_dir = out_dir or "."
     os.makedirs(out_dir, exist_ok=True)
+
     config = load_config(config_paths)
-    dataset = config.get("dataset", "unknown_dataset")
-    prefix = bam_prefix or os.environ.get(
-        "SCWGS_SCRNA_PREFIX_OVERRIDE", config.get("scWGS_scRNA_prefix", ""))
+    if dataset is None:
+        dataset = config.get("dataset", "unknown_dataset")
 
     cells = parse_cells(config)
     if cells.empty:
-        sys.exit("No cells parsed from config; check "
-                 "cellname_celltype_scWGS_scRNA_tup_list.")
+        sys.exit(f"No cells parsed from config; check '{CONFIG_CELL_KEY}'.")
 
-    counts = purity_and_counts(cells)
+    sample_map = load_annotation(sample_annotation, "sample")
+    dna_map = load_annotation(dna_annotation, "dna")
+
+    # revised at: https://sorryios.ai/chat/69cd3b8b-b68a-479f-ae80-5269790fd414
+    _key = cells["cell_id"].map(_norm_cell_key)
+    cells["label_sample"] = _key.map(sample_map)
+    cells["label_dna"]    = _key.map(dna_map)
+
+    #cells["label_sample"] = cells["cell_id"].map(sample_map)
+    #cells["label_dna"] = cells["cell_id"].map(dna_map)
+
+    base_counts = {
+        "n_cells_total": len(cells),
+        "n_cells_scRNA": int(cells["has_rna_fq"].sum()),
+        "n_cells_sample_labeled": int(cells["label_sample"].notna().sum()),
+        "n_cells_dna_labeled": int(cells["label_dna"].notna().sum()),
+    }
 
     depth_df = pd.DataFrame()
     if not skip_bams:
-        depth_df = depth_per_cell(cells, prefix, samtools, with_coverage)
+        depth_df = depth_per_cell(cells, dataset, results_prefix)
 
     cnv_cell_df, events_df = pd.DataFrame(), pd.DataFrame()
-    if ginkgo_dir:
-        segcopy = load_segcopy(ginkgo_dir, segcopy_name)
-        tumor_cells = cells.loc[cells["celltype"].str.lower() == "tumor",
-                                "cell_id"].tolist()
-        cnv_cell_df, events_df = cnv_metrics_from_segcopy(segcopy, tumor_cells)
+    if segcopy_path:
+        segcopy = load_segcopy(segcopy_path)
+        cnv_cell_df, events_df = cnv_profile_from_segcopy(segcopy, focal_max_bp=focal_max_bp)
 
-    # per-cell table: merge depth + cnv
-    per_cell = cells[["cell_id", "celltype"]]
+    per_cell = cells[["cell_id", "config_celltype",
+                      "label_sample", "label_dna",
+                      "has_dna_fq", "has_rna_fq"]].copy()
     if not depth_df.empty:
         per_cell = per_cell.merge(depth_df, on="cell_id", how="left")
     if not cnv_cell_df.empty:
-        per_cell = per_cell.merge(cnv_cell_df.drop(columns=["is_tumor"]),
-                                  on="cell_id", how="left")
+        per_cell = per_cell.merge(cnv_cell_df, on="cell_id", how="left")
 
-    summary = summarise(dataset, counts, depth_df, cnv_cell_df, events_df)
-
-    summary.to_csv(os.path.join(out_dir, "dataset_metrics.tsv"),
-                   sep="\t", index=False)
-    per_cell.to_csv(os.path.join(out_dir, "per_cell_metrics.tsv"),
-                    sep="\t", index=False)
     if not events_df.empty:
-        events_df.to_csv(os.path.join(out_dir, "cnv_event_sizes.tsv"),
-                         sep="\t", index=False)
+        events_df = events_df.merge(
+            cells[["cell_id", "label_sample", "label_dna"]], on="cell_id", how="left")
 
-    print(summary.to_string(index=False))
-    return summary
+    headline = build_headline(dataset, base_counts, depth_df, cells,
+                              cnv_cell_df, events_df, focal_max_bp=focal_max_bp)
+
+    agree_summary, discordant = annotation_agreement(cells)
+    agree_df = pd.DataFrame([{"dataset": dataset, **agree_summary}])
+
+    headline.to_csv(os.path.join(out_dir, "dataset_metrics.tsv"), sep="\t", index=False)
+    per_cell.to_csv(os.path.join(out_dir, "per_cell_metrics.tsv"), sep="\t", index=False)
+    agree_df.to_csv(os.path.join(out_dir, "annotation_agreement.tsv"), sep="\t", index=False)
+    discordant.to_csv(os.path.join(out_dir, "annotation_discordant_cells.tsv"),
+                      sep="\t", index=False)
+    if not events_df.empty:
+        events_df.to_csv(os.path.join(out_dir, "cnv_event_sizes.tsv"), sep="\t", index=False)
+
+    print("=== dataset_metrics (per labeling: __sample / __dna) ===")
+    print(headline.to_string(index=False))
+    print("\n=== annotation_agreement (sample vs dna) ===")
+    print(agree_df.to_string(index=False))
+    if not discordant.empty:
+        print(f"\n{len(discordant)} discordant cell(s) -> annotation_discordant_cells.tsv")
+    print(f"Stored at {out_dir}")
+
+    return headline, agree_df
 
 
 # --------------------------------------------------------------------------- #
 # Entry points
 # --------------------------------------------------------------------------- #
+def _get(obj, key, default=None):
+    try:
+        val = obj.get(key)
+    except (AttributeError, TypeError):
+        return default
+    return default if val is None else val
+
+
 def _from_snakemake(smk):
-    cfgs = list(smk.input.get("configs", [])) or list(smk.params.get("config_paths", []))
+    cfgs = list(_get(smk.input, "configs", []) or [])
+    if not cfgs:
+        cfgs = list(_get(smk.params, "config_paths", []) or [])
+
     run(
         config_paths=cfgs,
-        ginkgo_dir=smk.params.get("ginkgo_dir", ""),
-        out_dir=os.path.dirname(smk.output[0]),
-        bam_prefix=smk.params.get("bam_prefix"),
-        samtools=smk.params.get("samtools", "samtools"),
-        with_coverage=bool(smk.params.get("with_coverage", False)),
-        skip_bams=bool(smk.params.get("skip_bams", False)),
-        segcopy_name=smk.params.get("segcopy_name", "SegCopy"),
+        segcopy_path=_get(smk.input, "segcopy", None) or _get(smk.params, "segcopy", None),
+        out_dir=os.path.dirname(smk.output[0]) or ".",
+        sample_annotation=_get(smk.input, "sample_annot", None)
+                          or _get(smk.params, "sample_annotation", None),
+        dna_annotation=_get(smk.input, "dna_annot", None)
+                       or _get(smk.params, "dna_annotation", None),
+        dataset=_get(smk.params, "dataset", None),
+        results_prefix=_get(smk.params, "results_prefix", "") or "",
+        skip_bams=bool(_get(smk.params, "skip_bams", False)),
+        focal_max_bp=int(_get(smk.params, "focal_max_bp", 3_000_000)),
     )
+    print(f'Finished running with configs={cfgs} smk={str(smk)}')
 
 
 def _cli():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--config", nargs="+", required=True,
-                    help="config_template.yaml and the dataset YAML (template first)")
-    ap.add_argument("--ginkgo-dir", default="",
-                    help="Dir containing the Ginkgo SegCopy ground truth")
-    ap.add_argument("--out-dir", required=True)
-    ap.add_argument("--bam-prefix", default=None)
-    ap.add_argument("--samtools", default="samtools")
-    ap.add_argument("--segcopy-name", default="SegCopy")
-    ap.add_argument("--with-coverage", action="store_true",
-                    help="Also compute scWGS mean depth (slow: samtools depth)")
-    ap.add_argument("--skip-bams", action="store_true",
-                    help="Skip all BAM I/O (purity/ploidy/CNV only)")
-    a = ap.parse_args()
-    run(a.config, a.ginkgo_dir, a.out_dir, a.bam_prefix,
-        a.samtools, a.with_coverage, a.skip_bams, a.segcopy_name)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--config", nargs="+", required=True,
+                   help="config_template.yaml and the dataset YAML (template first)")
+    p.add_argument("--sample-annotation", required=True,
+                   help="Path to original author-provided sample annotation TSV "
+                        "(NO HEADER): original_sample_name\\ttumor|reference")
+    p.add_argument("--dna-annotation", required=True,
+                   help="Path to DNA sample annotation TSV (NO HEADER): "
+                        "DNA-inferred_sample_name\\ttumor|reference")
+    p.add_argument("--segcopy", default="",
+                   help="Lifted Ginkgo ground truth "
+                        "(results/<dataset>_ginkgo/output/SegCopy_grch38.tsv)")
+    p.add_argument("--out-dir", required=True)
+    p.add_argument("--dataset", default=None,
+                   help="Dataset stem for results/<dataset>_bams/... "
+                        "(defaults to config['dataset'])")
+    p.add_argument("--results-prefix", default="",
+                   help="Prefix prepended to results/ BAM/stats paths "
+                        "(use when not running from the Snakemake workdir)")
+    p.add_argument("--focal-max-bp", type=int, default=3_000_000)
+    p.add_argument("--skip-bams", action="store_true",
+                   help="Skip BAM stats I/O (purity/ploidy/CNV/agreement only)")
+    a = p.parse_args()
+    run(
+        config_paths=a.config,
+        segcopy_path=a.segcopy,
+        out_dir=a.out_dir,
+        sample_annotation=a.sample_annotation,
+        dna_annotation=a.dna_annotation,
+        dataset=a.dataset,
+        results_prefix=a.results_prefix,
+        skip_bams=a.skip_bams,
+        focal_max_bp=a.focal_max_bp,
+    )
 
 
 if __name__ == "__main__":
-    if "snakemake" in globals():          # injected by Snakemake `script:`
+    if "snakemake" in globals():
         _from_snakemake(globals()["snakemake"])
     else:
         _cli()
