@@ -14,3 +14,5 @@ ginkgo_binning: "variable_175000_48_bwa" # variable_500000_150_bwa # "variable_5
 # scWGS_scRNA_prefix: /nfs/wxz/zxf/copy-compass-sc-rna/sra-tables/
 # cellname_celltype_DNAseqFQ1_DNAseqFQ2_RNAseqFQ1_RNAseqFQ2_tup_list: ...
 
+# NOT_IMPLEMENTED_YET: The config variable EXCLUDED_TOOLS is a list of tools that should be excluded from the benchmark due to the characteristics of the data
+
