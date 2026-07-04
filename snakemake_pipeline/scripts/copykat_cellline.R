@@ -73,7 +73,8 @@ setwd(output_dir)
 dataset_name <- snakemake@params$dataset
 
 #Run copyKat
-copykat.test <- copykat(rawmat=data_matrix, #2d matrix with gene expression counts
+copykat.test <- tryCatch({
+                copykat(rawmat=data_matrix, #2d matrix with gene expression counts
                         id.type="S", #gene id type (symbol or ensemble)
                         cell.line="yes", #if data is from pure cell line
                         ngene.chr=5,
@@ -87,6 +88,58 @@ copykat.test <- copykat(rawmat=data_matrix, #2d matrix with gene expression coun
                         plot.genes="TRUE",
                         genome = input_genome,
                         n.cores=32)
+}, error = function(e) {
+  message("MCMC segmentation failed with error: ", e$message)
+  message("Falling back to custom MCMC...")
+
+  # https://www.doubao.com/chat/38432855834525186
+  # do not throw out an error if only one cluster is found
+
+  original_CNA_MCMC <- copykat:::CNA.MCMC
+  patched_CNA_MCMC <- function(clu, fttmat, bins, cut.cor, n.cores) {
+
+      valid_clu <- clu[!is.na(clu)]
+
+      if (length(valid_clu) == 0) {
+        message("WARNING: clu is empty/NA. Assuming all cells belong to a single clone.")
+        clu <- rep(1, ncol(fttmat))
+        names(clu) <- colnames(fttmat)
+      } else if (length(unique(valid_clu)) == 1) {
+        message("WARNING: only 1 cluster detected. Proceeding with single-clone segmentation.")
+        if (length(clu) != ncol(fttmat)) {
+          clu <- rep(unique(valid_clu), ncol(fttmat))
+          names(clu) <- colnames(fttmat)
+        }
+      }
+
+      original_CNA_MCMC(clu = clu, fttmat = fttmat, bins = bins, 
+                        cut.cor = cut.cor, n.cores = n.cores)
+  }
+
+  assignInNamespace("CNA.MCMC", patched_CNA_MCMC, ns = "copykat")
+
+  fallback_result <- tryCatch({
+                copykat(rawmat = data_matrix, #2d matrix with gene expression counts
+                        id.type = "S", #gene id type (symbol or ensemble)
+                        cell.line="yes", #if data is from pure cell line
+                        ngene.chr = 5,
+                        LOW.DR = 0.05,
+                        UP.DR = 0.1,
+                        win.size = 25, #minimal window size for segmentation
+                        norm.cell.names = ref_cells, #not specifying the reference cells
+                        sam.name = dataset_name, #sample name used for output files
+                        distance = "euclidean",
+                        output.seg = "FALSE",
+                        plot.genes = "TRUE",
+                        genome = input_genome,
+                        n.cores = 32)
+  }, error = function(e2) {
+    message("Custom MCMC fall-back also failed: ", e2$message)
+    stop("Both methods failed.")
+  })
+  return(fallback_result)
+}
+)
 
 # ------------------------------------------------------------------------------
 print("SessionInfo:")
