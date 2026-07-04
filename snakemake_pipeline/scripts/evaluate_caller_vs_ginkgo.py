@@ -9,6 +9,11 @@
   Added CONICSmat, Numbat, and CaSpER into the benchmark
 - https://agent.minimaxi.com/share/389393240474113?chat_type=2
   Added infercna support
+- Replaced the per-cell median bin normalization with a fixed, method-appropriate
+  diploid baseline estimated once from the reference (diploid) cells when
+  available (euploid-reference / two-pass normalization, after
+  Song et al. 2025, Brief. Bioinform. 26(2):bbaf076, and
+  Schmid et al. 2025, Nat. Commun. 16:8777).
 </REVISION_HISTORY>
 '''
 
@@ -42,11 +47,16 @@ Usage:
 
 Notes:
 - Cell matching is by column order, as requested by the user.
-- For copykat-like centered signals, predicted classes are assigned using
-  thresholds around 0 by default:
-      loss < -0.1, neutral [-0.1, 0.1], gain > 0.1
-- For absolute copy-number-like predictions, the script falls back to
-  median-relative thresholds.
+- Each genomic bin is classified gain/loss/neutral relative to a FIXED,
+  method-appropriate diploid baseline (0 for log-ratio / discrete callers, 2 for
+  absolute copy number), NOT relative to the per-cell median. The per-cell median
+  is a biased estimate of the diploid level in aneuploid cells, where the median
+  sits on the dominant ALTERED state; see classify_pred_value for the references.
+- When cells annotated as 'reference' (diploid) are available, the baseline is
+  estimated once from those cells (euploid-reference / two-pass normalization,
+  after Song et al. 2025, Brief. Bioinform. bbaf076, and Schmid et al. 2025,
+  Nat. Commun. 16:8777) and reused for every cell; otherwise the fixed per-format
+  baseline is used. See compute_reference_baseline / compute_metrics_for_cell.
 
 Modified to support SCEVAN:
     - Reads SCEVAN's '*_CNAmtx.RData' file (gene-by-cell matrix).
@@ -686,6 +696,94 @@ def compute_exome_fraction(covered_intervals_by_chrom, gene_positions_total_bp):
     return min(1.0, max(0.0, frac))
 
 
+# ============================================================================
+# Fixed diploid baseline for gain/loss classification
+#
+# REVISED: the neutral ("diploid") baseline against which each genomic bin is
+# called gain / loss is now a FIXED, method-appropriate value instead of the
+# per-cell median of the predicted bin values.
+#
+# Why the old per-cell-median normalization was wrong
+# ---------------------------------------------------
+# The old code set, for each cell, baseline = weighted_median(pred_values) and
+# called a bin gain/loss relative to that per-cell median. The median estimates
+# the diploid level ONLY when < 50% of that cell's genome is altered. For the
+# highly aneuploid cells that matter most this is false and the baseline lands on
+# the dominant ALTERED state:
+#   * Song et al., Brief. Bioinform. 26(2):bbaf076 (2025) show that at high CNA
+#     burden / tumor purity the gained/lost state is "incorrectly centered" as
+#     the baseline (their CRC02 inferCNV/CaSpER case); their remedy is a two-pass
+#     run that anchors the baseline on known-normal cells (in SCEVAN, the MEDIAN
+#     OF THE REFERENCE CELLS is subtracted).
+#   * Schmid et al., Nat. Commun. 16:8777 (2025) state every caller "has a
+#     baseline value, usually 0", only losses below / gains above it are
+#     biologically meaningful, and a wrongly assigned baseline is exactly what
+#     drives partial-AUC below 0.5; they normalize against euploid REFERENCE
+#     cells, never against each cell's own median.
+#
+# Here the caller output is already normalized against its euploid reference, so
+# the diploid level is a fixed constant per value convention:
+#   * log-ratio / centered callers (copyKat, inferCNV(expr), infercna, SCEVAN,
+#     Numbat(expr)) and discrete -1/0/1 callers (CaSpER, CONICSmat, Numbat(CNV))
+#       -> baseline 0
+#   * absolute integer copy number (segment files, Ginkgo-style ground truth)
+#       -> baseline 2
+# These constants are also the FALLBACK; when reference (diploid) cells are
+# available, compute_reference_baseline() estimates the baseline from them and it
+# overrides the constant (see main()).
+# ============================================================================
+
+# Fixed neutral (diploid) baseline per caller format.
+NEUTRAL_BASELINE = {
+    "copykat":        0.0,
+    "infercnv":       0.0,   # set to 1.0 if you feed RAW inferCNV obs (centered on 1)
+    "infercna":       0.0,
+    "generic_matrix": 0.0,
+    "scevan_rdata":   0.0,
+    "scevan_seg":     2.0,   # segment-style absolute copy number
+    "numbat":         0.0,
+    "casper":         0.0,   # discrete -1 / 0 / 1
+    "conicsmat":      0.0,   # discrete -1 / 0 / 1
+}
+
+# Half-width of the neutral band around the baseline (same magnitudes the script
+# used before, now applied around the FIXED/reference baseline instead of the
+# per-cell median): log-ratio / discrete callers use +/-0.1 around the baseline;
+# absolute CN uses +/-0.5 (i.e. the old 1.5 / 2.5 cut points around 2).
+NEUTRAL_DELTA = {
+    "scevan_seg": 0.5,
+}
+_DEFAULT_DELTA = 0.1
+
+
+def neutral_baseline_for_format(caller_format):
+    """Fixed diploid baseline for a caller (fallback for the per-cell median)."""
+    return NEUTRAL_BASELINE.get(caller_format, 0.0)
+
+
+def neutral_delta_for_format(caller_format):
+    """Half-width of the neutral band around the baseline."""
+    return NEUTRAL_DELTA.get(caller_format, _DEFAULT_DELTA)
+
+
+def _safe_roc_auc(y_true, y_score, sample_weight=None):
+    """roc_auc_score that returns NaN when only one class is present in y_true.
+
+    Threshold-free and baseline-independent; this is the metric both Song et al.
+    (2025) and Schmid et al. (2025) rely on for CNA-profile accuracy (alongside
+    correlation). The guard prevents cells that contain only gains, or only
+    losses, from raising ValueError.
+    """
+    if len(set(y_true)) < 2:
+        return float("nan")
+    try:
+        return sklearn.metrics.roc_auc_score(
+            y_true, y_score, sample_weight=sample_weight
+        )
+    except ValueError:
+        return float("nan")
+
+
 def classify_gt_cn(cn):
     if cn > 2:
         return "gain"
@@ -694,41 +792,31 @@ def classify_gt_cn(cn):
     return "neutral"
 
 
-def classify_pred_value(med, value, caller_format):
+def classify_pred_value(value, caller_format, baseline=None, delta=None):
     """
-    Classify a prediction into gain/loss/neutral.
+    Classify a predicted bin into gain / loss / neutral relative to a FIXED,
+    method-appropriate diploid baseline.
 
-    For copykat-like centered signals, predicted classes are assigned using
-    thresholds around 0 by default:
-        loss < -0.1, neutral [-0.1, 0.1], gain > 0.1
-    For absolute copy-number-like predictions, the script falls back to
-    median-relative thresholds.
+    The previous `med` argument (the per-cell weighted median) has been REMOVED:
+    the median is a biased estimate of the diploid level in aneuploid cells, so
+    genuine gains were scored as neutral and neutral regions as losses (Song
+    et al. 2025, Brief. Bioinform. bbaf076 -- the CRC02 "incorrect centering";
+    Schmid et al. 2025, Nat. Commun. 16:8777 -- baseline "usually 0", a wrong
+    baseline drives partial-AUC < 0.5).
+
+    The caller output is already normalized against its euploid reference, so the
+    diploid level is a fixed constant (0 for log-ratio / discrete callers, 2 for
+    absolute copy number). `baseline` / `delta` may be supplied explicitly (e.g.
+    a baseline estimated once from the reference/diploid cells), otherwise the
+    fixed per-format defaults are used.
     """
-    if caller_format in ("copykat", "infercnv", "generic_matrix",
-                         "infercna", # infercna uses similar log2 ratio format
-                         "scevan_rdata", "numbat",            # NEW
-                         "casper", "conicsmat"):              # NEW
-        # Check if data look centered around zero.
-        # med = statistics.median(values) if values else 0.0
-        if abs(med) < 0.5:
-            if value > 0.1:
-                return "gain"
-            if value < -0.1:
-                return "loss"
-            return "neutral"
-
-    # Absolute-CN style or fallback.
-    # med = statistics.median(values) if values else 2.0
-    if med > 1.0:
-        if value > 2.5:
-            return "gain"
-        if value < 1.5:
-            return "loss"
-        return "neutral"
-
-    if value > med + 0.1:
+    if baseline is None:
+        baseline = neutral_baseline_for_format(caller_format)
+    if delta is None:
+        delta = neutral_delta_for_format(caller_format)
+    if value > baseline + delta:
         return "gain"
-    if value < med - 0.1:
+    if value < baseline - delta:
         return "loss"
     return "neutral"
 
@@ -912,7 +1000,40 @@ def build_overlap_intervals(gt_intervals, pred_intervals):
                 k += 1
     return ret
 
-def compute_metrics_for_cell(gt_intervals, pred_intervals, caller_format, exome_fraction):
+
+def compute_reference_baseline(cell_pairs, caller_by_cell, ref_annot_dict, caller_format):
+    """
+    Estimate the diploid baseline from cells annotated 'reference' (diploid),
+    pooling their predicted bin values and taking the base-pair-weighted median.
+
+    This is the euploid-reference / two-pass normalization recommended by
+    Song et al. 2025 (Brief. Bioinform. bbaf076; in SCEVAN the median of the
+    reference cells is the baseline) and Schmid et al. 2025 (Nat. Commun.
+    16:8777; normalize against euploid reference cells), and it replaces the old
+    per-cell median (biased in aneuploid cells). Because it reads the diploid
+    cells' own predicted values, it auto-adapts to each caller's value convention
+    (~0 for log-ratio / discrete callers, ~2 for absolute copy number).
+
+    `ref_annot_dict` is keyed by cellpath2id(<ground-truth cell name>). Returns
+    None when no reference cells are available, in which case the fixed
+    per-format baseline (neutral_baseline_for_format) is used instead.
+    """
+    ref_vals, ref_w = [], []
+    for gt_cell, pred_cell in cell_pairs:
+        if ref_annot_dict.get(cellpath2id(gt_cell)) != "reference":
+            continue
+        for (_chrom, s, e, val) in caller_by_cell.get(pred_cell, []):
+            if val is None:
+                continue
+            ref_vals.append(val)
+            ref_w.append(max(1, e - s))
+    if not ref_vals:
+        return None
+    return weightedstats.weighted_median(ref_vals, weights=ref_w)
+
+
+def compute_metrics_for_cell(gt_intervals, pred_intervals, caller_format, exome_fraction,
+                             baseline=None):
     # pairs = build_overlap_pairs(gt_intervals, pred_intervals)
     # list of (chrom, ov_start, ov_end, gcn, pval)
     intersect_intervals = build_overlap_intervals(gt_intervals, pred_intervals)
@@ -936,25 +1057,45 @@ def compute_metrics_for_cell(gt_intervals, pred_intervals, caller_format, exome_
     gt_vals = [x[3] for x in intersect_intervals]
     pred_vals = [x[4] for x in intersect_intervals]
 
-    # https://www.doubao.com/chat/38420994951737090
-    # CRITICAL FIX: Compute median ONCE per cell to avoid O(n^2) runtime 
-    # pred_median = statistics.median(pred_vals) if pred_vals else 0.0
-    pred_median = weightedstats.weighted_median(pred_vals, weights=weights)
+    # ---- REVISED NORMALIZATION --------------------------------------------
+    # Old (wrong): pred_median = weightedstats.weighted_median(pred_vals, weights=weights)
+    #              ... classify each bin relative to that PER-CELL median.
+    # New: classify each bin relative to a FIXED, method-appropriate diploid
+    #      baseline. The caller has already normalized its output against a
+    #      euploid reference, so the diploid level is a constant (0 for
+    #      log-ratio/discrete callers, 2 for absolute CN), not the cell's median.
+    #      `baseline` is normally supplied by main() as a value estimated ONCE
+    #      from the reference (diploid) cells (compute_reference_baseline), per
+    #      the euploid-reference / two-pass normalization of Song et al. 2025 and
+    #      Schmid et al. 2025; it falls back to the fixed per-format default.
+    if baseline is None:
+        baseline = neutral_baseline_for_format(caller_format)
+    delta = neutral_delta_for_format(caller_format)
+    # -----------------------------------------------------------------------
 
     gt_cls = [classify_gt_cn(v) for v in gt_vals]
-    pred_cls = [classify_pred_value(pred_median, v, caller_format) for v in pred_vals]
+    pred_cls = [classify_pred_value(v, caller_format, baseline=baseline, delta=delta)
+                for v in pred_vals]
 
-    # TODO: RNA-seq-based callers do not generate integer copy numbers,
-    # so how to compute classification metrics (such as true-positive, accuracy, and F-score) here?
-    # https://academic.oup.com/bib/article/26/2/bbaf076/8051529
+    # NOTE: RNA-seq-based callers do not generate integer copy numbers, so the
+    # discrete gain/loss/neutral metrics below are inherently threshold-dependent
+    # and should be read together with the THRESHOLD-FREE metrics computed further
+    # down (weighted Pearson/Spearman + gain/loss ROC-AUC), which is what both
+    # references foreground:
+    # https://academic.oup.com/bib/article/26/2/bbaf076/8051529  (Song et al. 2025)
     #  - the word accuracy does not denote the one for classification
     #  - F1 score was for LOH detection and tumor-vs-normal classification of cells
     #  - no integer copy numbers were evaluated
-    # https://www.nature.com/articles/s41467-025-62359-9
+    # https://www.nature.com/articles/s41467-025-62359-9  (Schmid et al. 2025)
     #  - accuracy was only used for tumor-vs-normal classification of cells
-    #  - RNA-seq threshold was variable, thereby giving ROC and maximized F1 score
+    #  - RNA-seq threshold was variable: gain/loss thresholds were chosen to
+    #    MAXIMIZE multi-class F1 over the biologically meaningful range (gains
+    #    above baseline, losses below) -- a per-method/global step, not per-bin
     #  - did not evaluate breakpoint detection in RNA-seq
     #  - no integer copy numbers were evaluated otherwise
+    # The discrete metrics here use a single fixed neutral band around the
+    # (reference-derived or fixed) baseline; for full fidelity to Schmid et al.,
+    # optimize the gain/loss thresholds once globally.
 
     tp_gain = sum(w for w, g, p in zip(weights, gt_cls, pred_cls) if g == "gain" and p == "gain")
     fp_gain = sum(w for w, g, p in zip(weights, gt_cls, pred_cls) if g != "gain" and p == "gain")
@@ -972,10 +1113,14 @@ def compute_metrics_for_cell(gt_intervals, pred_intervals, caller_format, exome_
     pearson_r = wcorr.WeightedCorr(x=gt_vals, y=pred_vals, w=weights)(method='pearson')
     spearman_r = wcorr.WeightedCorr(x=gt_vals, y=pred_vals, w=weights)(method='spearman')
 
+    # Threshold-free, baseline-independent gain/loss AUCs (gain-vs-rest /
+    # loss-vs-rest, as in Schmid et al. 2025), now guarded against single-class
+    # cells so they no longer raise.
     gt_gain_bools = [(1 if v > 2 else 0) for v in gt_vals]
     gt_loss_bools = [(1 if v < 2 else 0) for v in gt_vals]
-    gain_weighted_auc = sklearn.metrics.roc_auc_score(gt_gain_bools, 0 + np.array(pred_vals), sample_weight=weights)
-    loss_weighted_auc = sklearn.metrics.roc_auc_score(gt_loss_bools, 0 - np.array(pred_vals), sample_weight=weights)
+    pred_arr = np.asarray(pred_vals, dtype=float)
+    gain_weighted_auc = _safe_roc_auc(gt_gain_bools, pred_arr, sample_weight=weights)
+    loss_weighted_auc = _safe_roc_auc(gt_loss_bools, -pred_arr, sample_weight=weights)
     # gain_weighted_f1s = sklearn.metrics.f1_score(gt_gain_bools, 0 + np.array(pred_vals), sample_weight=weights)
     # loss_weighted_f1s = sklearn.metrics.f1_score(gt_loss_bools, 0 - np.array(pred_vals), sample_weight=weights)
 
@@ -1261,6 +1406,27 @@ def main():
         only_caller_cell = caller_cell_names[0]
         cell_pairs = [(gt_cell_names[0], only_caller_cell)]
 
+    # REVISED NORMALIZATION: estimate the diploid baseline ONCE from the
+    # reference (diploid) cells and reuse it for every cell, instead of taking
+    # each cell's own median (which is biased for aneuploid cells). Falls back to
+    # the fixed per-format baseline when no reference cells are present. The
+    # 'reference' cells here are taken from the author-provided sample annotation
+    # (the ground-truth tumor/reference labelling); switch to dna_annot_dict if
+    # you prefer the DNA-derived labelling. See Song et al. 2025 (Brief.
+    # Bioinform. bbaf076) and Schmid et al. 2025 (Nat. Commun. 16:8777).
+    ref_baseline = compute_reference_baseline(
+        cell_pairs, caller_by_cell, sample_annot_dict, caller_format)
+    if ref_baseline is None:
+        logging.info(
+            "No 'reference' cells available for baseline estimation; using fixed "
+            f"per-format diploid baseline {neutral_baseline_for_format(caller_format)} "
+            f"for caller format '{caller_format}'.")
+    else:
+        logging.info(
+            f"Reference-derived diploid baseline = {ref_baseline:.6f} "
+            f"(fixed per-format default = {neutral_baseline_for_format(caller_format)}; "
+            f"neutral band half-width = {neutral_delta_for_format(caller_format)}).")
+
     long_rows = []
     summary_rows = []
 
@@ -1291,6 +1457,7 @@ def main():
             pred_intervals=pred_intervals,
             caller_format=caller_format,
             exome_fraction=exome_fraction,
+            baseline=ref_baseline,   # reference-derived (or None -> fixed per-format)
         )
         metrics["Fraction of the cells with inferred copy numbers"] = (
             len(common_cells) / float(len(cell_to_gt_name))
