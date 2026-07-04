@@ -350,6 +350,8 @@ def _default_targets():
             targets.append(f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_casper_with_preclassified_cells.tsv")
             targets.append(f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_numbat_with_preclassified_cells.tsv")
     targets.append(f"results/{mat_specific_dataset}_output/evaluation/dataset_metrics.tsv")
+    # per-dataset summary table (8 selected columns, built by plot_cnv_heatmaps.py)
+    # targets.append(f"results/{mat_specific_dataset}_output/evaluation/dataset_summary.tsv")
     return targets
 
 rule all:
@@ -2029,23 +2031,56 @@ if (MODE == "fastq" or MODE == "bam") and always_has_ref_cells:
                 2>{log}
             """
 
+# ==============================================================================
+# Dataset-level descriptive / confounder metrics
+#
+# Tumor/normal is summarised under BOTH labelings, plus their agreement:
+#   (1) "sample" = author/config labels   -> ORI_CELL_ANNOTATION
+#                  (data/{DATASET}_input/sample_annotation_1.txt,
+#                   written by rule create_sample_annotation_1)
+#   (2) "dna"    = Ginkgo ground-truth labels -> DNA_CELL_ANNOTATION
+#                  (data/{dataset}_ginkgo_groundtruth/dna_cell_annotation.txt,
+#                   written by separate_tumor_normal_from_ginkgo_segcopy.py via
+#                   rule format_ginkgo_ground_truth)
+#
+# Reads (declared as real inputs so this rule runs AFTER alignment + Ginkgo,
+# instead of the script string-munging the config and racing the DAG):
+#   - merged YAML config(s)         (celltype labels -> cell counts)
+#   - both annotation files         (the two tumor/normal labelings)
+#   - per-cell *.bam.stats          (already produced by the alignment rules)
+#   - lifted Ginkgo SegCopy_grch38  (ploidy / CNV burden)
+# ==============================================================================
+# The metrics script needs the merged config on disk. configfile paths are not
+# exposed as a list in older Snakemake, so fall back to workflow.configfiles.
+_METRICS_CONFIG_PATHS = list(getattr(workflow, "configfiles", []) or [])
+
 rule compute_dataset_metrics:
-    output:
-        f"results/{mat_specific_dataset}_output/evaluation/dataset_metrics.tsv",
-        f"results/{mat_specific_dataset}_output/evaluation/per_cell_metrics.tsv",
-        f"results/{mat_specific_dataset}_output/evaluation/cnv_event_sizes.tsv",
     input:
-        # make this depend on whatever Ginkgo target already exists so it
-        # runs only after the ground truth is built, e.g.:
-        ginkgo_done = f"results/{dataset}_ginkgo/output/SegCopy",
+        segcopy      = f"results/{dataset}_ginkgo/output/SegCopy_grch38.tsv",
+        sample_annot = ORI_CELL_ANNOTATION,   # (1) author/config labeling
+        dna_annot    = DNA_CELL_ANNOTATION,    # (2) Ginkgo ground-truth labeling
+        dna_stats    = [f"results/{dataset}_bams/dna/{c}_hg19.bam.stats"
+                        for c in ALL_CELL_IDS],
+        rna_stats    = [f"results/{dataset}_bams/rna/all_cells_grch38_{c}.bam.stats"
+                        for c in ALL_CELL_IDS],
+    output:
+        metrics            = f"results/{mat_specific_dataset}_output/evaluation/dataset_metrics.tsv",
+        per_cell           = f"results/{mat_specific_dataset}_output/evaluation/per_cell_metrics.tsv",
+        agreement          = f"results/{mat_specific_dataset}_output/evaluation/annotation_agreement.tsv",
+        discordant         = f"results/{mat_specific_dataset}_output/evaluation/annotation_discordant_cells.tsv",
+        cnv_event_sizes    = f"results/{mat_specific_dataset}_output/evaluation/cnv_event_sizes.tsv",
+    log:
+        f"logs/{mat_specific_dataset}/{mat_specific_dataset}_compute_dataset_metrics.log"
+    threads: 1
+    resources:
+        mem_mb = 4000
     params:
-        config_paths = workflow.configfiles,        # template + dataset YAML
-        ginkgo_dir   = f"results/{dataset}_ginkgo/output",   # dir holding SegCopy
-        bam_prefix   = config.get("_scWGS_scRNA_prefix", ""),
-        samtools     = "samtools",
-        with_coverage= False,   # set True for true scWGS mean depth (slow)
-        skip_bams    = False,   # set True to skip all BAM I/O
-        segcopy_name = "SegCopy",
+        config_paths   = _METRICS_CONFIG_PATHS,
+        dataset        = dataset,           # stem for results/{dataset}_bams/...
+        results_prefix = "",                # run from the Snakemake workdir
+        focal_max_bp   = 3_000_000,
     script:
         "scripts/compute_dataset_metrics.py"
+
+
 
