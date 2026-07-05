@@ -4,7 +4,7 @@
 
 This repository provides a benchmarking pipeline to evaluate and select the best scRNA-seq-based Copy Number Variation (CNV) callers. Currently, the pipeline evaluates seven different tools: **inferCNA**, **inferCNV**, **CopyKat**, **SCEVAN**, **Numbat**, **CaSpER**, and **CONICSmat**.
 
-To establish highly accurate, cell-specific ground truths for these scRNA-seq-based callers, this repository relies on single-cell Whole Genome Sequencing (scWGS) data from scWGS-scRNA co-sequencing experiments (where each individual cell is sequenced by both modalities). It selects the optimal scWGS-based CNV caller(s) utilizing benchmarking results from [copy-num-bench-scwg](https://github.com/zhaoxiaofei/copy-num-bench-scwg).
+To establish highly accurate, cell-specific ground truths for these scRNA-seq-based callers, this repository relies on single-cell Whole Genome Sequencing (scWGS) data from scWGS-scRNA co-sequencing experiments (where each individual cell is sequenced by both modalities). It selects the optimal scWGS-based CNV caller(s) utilizing benchmarking results from [copy-num-bench-scwgs](https://github.com/zhaoxiaofei/copy-num-bench-scwgs).
 
 ## Installation
 
