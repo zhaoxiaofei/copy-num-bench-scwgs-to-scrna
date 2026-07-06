@@ -158,6 +158,19 @@ def build_annot_dict(annot_list):
     """Return {cellpath2id(name): celltype} from load_sample_annotation output."""
     return {cellpath2id(name): ct for name, ct in annot_list}
 
+def annotation_is_all_unknown(annot_list):
+    """True if a sample annotation carries no real tumor/normal label.
+    ORI_CELL_ANNOTATION is written by create_sample_annotation_1 as all-'unknown'
+    exactly when the config declined to label cells (every celltype 'Unknown').
+    In that case the author/config labeling is a placeholder and the DNA (Ginkgo)
+    labeling should be used as the effective 'sample' labeling instead.
+    load_sample_annotation only canonicalises the normal synonyms, so anything
+    that is neither 'reference' nor 'tumor' (i.e. 'unknown') signals the deferral.
+    """
+    if not annot_list:
+        return True
+    return all(ct not in ("reference", "tumor") for _name, ct in annot_list)
+
 def safe_float(x):
     try:
         return float(x)
@@ -1340,7 +1353,18 @@ def main():
     dna_annot        = load_sample_annotation(args.dna_annotation)
     rna_refset_annot = load_sample_annotation(args.rna_annotation)
     rna_real_annot   = load_sample_annotation(args.rna_annotation + '.maybe_zero_refs')
-    
+
+    # If the author/config 'sample' annotation is a placeholder (all-unknown, i.e.
+    # the config used 'Unknown' for every cell), defer to the DNA (Ginkgo) labeling
+    # as the effective sample labeling: the 'celltype' column, the classification
+    # benchmarks, and the reference-derived baseline then all use DNA truth.
+    SAMPLE_IS_UNKNOWN = annotation_is_all_unknown(sample_annot)
+    if SAMPLE_IS_UNKNOWN:
+        logging.info(
+            "Sample annotation is all-unknown (config celltypes were 'Unknown'); "
+            "using the DNA (Ginkgo) annotation as the effective 'sample' labeling.")
+        sample_annot = dna_annot
+
     # Keyed by normalised cell ID
     sample_annot_dict = build_annot_dict(sample_annot)
     dna_annot_dict    = build_annot_dict(dna_annot)    # matched against gt_cell (DNA space)
@@ -1513,7 +1537,9 @@ def main():
     clf_benchmarks = {
         "rna_vs_dna":    compute_cell_classification_benchmark(cell_ct_real_rna, cell_ct_dna),
         "rna_vs_sample": compute_cell_classification_benchmark(cell_ct_real_rna, cell_ct_sample),
-        "dna_vs_sample": compute_cell_classification_benchmark(cell_ct_dna, cell_ct_sample),
+        # dna_vs_sample is meaningless when sample==dna (all-unknown config).
+        "dna_vs_sample": ({} if SAMPLE_IS_UNKNOWN
+                          else compute_cell_classification_benchmark(cell_ct_dna, cell_ct_sample)),
     }
 
     clf_out = os.path.splitext(args.output)[0] + ".cell_classification.tsv"

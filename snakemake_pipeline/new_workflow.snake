@@ -972,6 +972,15 @@ rule create_sample_annotation_1:
         with open(output.annot, "w") as f:
             for cid in ALL_CELL_IDS:
                 cell_type = ('tumor' if (cid in TUM_CELL_IDS) else 'reference')
+                # When the config declined to label cells (all "Unknown"), the
+                # tumor/normal origin is NOT author-provided. Write 'unknown' so
+                # downstream scripts (evaluate_caller_vs_ginkgo.py,
+                # compute_dataset_metrics.py) detect the placeholder and fall back
+                # to the DNA (Ginkgo) labeling rather than trusting these labels.
+                if ALL_CONFIG_UNKNOWN:
+                    cell_type = 'unknown'
+                else:
+                    cell_type = ('tumor' if (cid in TUM_CELL_IDS) else 'reference')
                 f.write(f"{cid}\t{cell_type}\n")
 
 RNA_CELL_ANNOTATION = SELECTED_COUNT_MATRIX + '.annotation.txt'
@@ -2107,7 +2116,6 @@ rule compute_dataset_metrics:
                         for c in ALL_CELL_IDS],
         rna_stats    = [f"results/{dataset}_bams/rna/all_cells_grch38_{c}.bam.stats"
                         for c in ALL_CELL_IDS],
-        HAS_REF_CELLS = HAS_REF_CELLS,
     output:
         metrics            = f"results/{mat_specific_dataset}_output/evaluation/dataset_metrics.tsv",
         per_cell           = f"results/{mat_specific_dataset}_output/evaluation/per_cell_metrics.tsv",
@@ -2124,6 +2132,7 @@ rule compute_dataset_metrics:
         dataset        = dataset,           # stem for results/{dataset}_bams/...
         results_prefix = "",                # run from the Snakemake workdir
         focal_max_bp   = 3_000_000,
+        HAS_REF_CELLS  = HAS_REF_CELLS,
     script:
         "scripts/compute_dataset_metrics.py"
 

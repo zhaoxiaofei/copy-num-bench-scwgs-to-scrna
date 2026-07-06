@@ -66,6 +66,11 @@ _REF_CELLTYPES = {
     "diploid", "bl", "lymphocyte", "lymphocite", "blood",
 }
 
+# Raw labels that mean "no tumor/normal call" in an annotation file. Written by
+# rule create_sample_annotation_1 as 'unknown' for every cell exactly when the
+# config used 'Unknown' throughout (see new_workflow.snake).
+_UNKNOWN_LABELS = {"unknown", "unk", "na", "n/a", "", "-", "."}
+
 def _norm_cell_key(x):
     return str(x).strip().replace('/', '.').replace('_', '.').replace('-', '.')
 
@@ -146,6 +151,29 @@ def load_annotation(path, name):
             assert sample not in mapping, f'{sample} is duplicated at {path}! Aborting!'
             mapping[sample] = _label_of(label)
     return mapping
+
+def annotation_is_all_unknown(path):
+    """True if every raw label in a NO-HEADER annotation file is an 'unknown' placeholder.
+
+    Read BEFORE _label_of canonicalisation (which would turn 'unknown' into
+    'tumor'). Used to decide whether the author/config 'sample' labeling is real
+    or a placeholder deferring to the DNA (Ginkgo) labeling. A missing file counts
+    as unknown.
+    """
+    if not path or not os.path.exists(path):
+        return True
+    saw_label = False
+    with open(path) as fh:
+        for line in fh:
+            if not line.strip():
+                continue
+            parts = line.split("\t") if "\t" in line else line.split()
+            if len(parts) < 2:
+                continue
+            saw_label = True
+            if parts[1].strip().lower() not in _UNKNOWN_LABELS:
+                return False
+    return not saw_label
 
 # --------------------------------------------------------------------------- #
 # Pipeline output BAM / stats paths (must match new_workflow.snake exactly)
@@ -403,10 +431,10 @@ def annotation_agreement(cells):
 # --------------------------------------------------------------------------- #
 # Assembly
 # --------------------------------------------------------------------------- #
-def build_headline(dataset, base_counts, depth_df, cells, cnv_cell_df, events_df,
+def build_headline(dataset, ref_cell_source, base_counts, depth_df, cells, cnv_cell_df, events_df,
                    focal_max_bp=3_000_000):
     """One wide row: shared metrics + per-labeling metrics suffixed __sample / __dna."""
-    row = {"dataset": dataset}
+    row = {"dataset": dataset, "ref_cell_identification": ref_cell_source}
     row.update(base_counts)
 
     if not depth_df.empty:
@@ -446,6 +474,19 @@ def run(config_paths, segcopy_path, out_dir,
     sample_map = load_annotation(sample_annotation, "sample")
     dna_map = load_annotation(dna_annotation, "dna")
 
+    # When the author/config 'sample' labeling is a placeholder (all-'unknown',
+    # i.e. the config used 'Unknown' for every cell), the tumor/normal statuses
+    # were inferred from the scWGS (Ginkgo) DNA data. Use the DNA labeling as the
+    # effective 'sample' labeling, and asterisk the dataset name to flag that the
+    # '__sample' metrics are DNA-inferred rather than author-provided.
+    sample_is_unknown = annotation_is_all_unknown(sample_annotation)
+    if sample_is_unknown:
+        print("[metrics] sample annotation is all-unknown (config celltypes were "
+              "'Unknown'); using DNA (Ginkgo) labeling as the effective 'sample' "
+              "labeling and asterisking the dataset name.", file=sys.stderr)
+        sample_map = dict(dna_map)
+        # dataset = f"{dataset}*"
+    ref_cell_source = ('scWGS-coseq-data' if sample_is_unknown else 'prior-publication')
     # revised at: https://sorryios.ai/chat/69cd3b8b-b68a-479f-ae80-5269790fd414
     _key = cells["cell_id"].map(_norm_cell_key)
     cells["label_sample"] = _key.map(sample_map)
@@ -482,10 +523,17 @@ def run(config_paths, segcopy_path, out_dir,
         events_df = events_df.merge(
             cells[["cell_id", "label_sample", "label_dna"]], on="cell_id", how="left")
 
-    headline = build_headline(dataset, base_counts, depth_df, cells,
+    headline = build_headline(dataset, ref_cell_source, base_counts, depth_df, cells,
                               cnv_cell_df, events_df, focal_max_bp=focal_max_bp)
 
     agree_summary, discordant = annotation_agreement(cells)
+    if sample_is_unknown:
+        # With no independent author labeling, sample==dna: agreement is trivial.
+        # Blank the confusion/kappa so it isn't mistaken for real concordance.
+        agree_summary = {k: (np.nan if k != "n_cells_compared" else agree_summary.get(k, 0))
+                         for k in agree_summary}
+        discordant = discordant.iloc[0:0]
+
     agree_df = pd.DataFrame([{"dataset": dataset, **agree_summary}])
 
     headline.to_csv(os.path.join(out_dir, "dataset_metrics.tsv"), sep="\t", index=False)
