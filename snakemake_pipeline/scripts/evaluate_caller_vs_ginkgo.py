@@ -215,6 +215,16 @@ def load_ground_truth_wide(path):
                 continue
 
             chrom = normalise_chrom(row[0])
+            # Sex chromosomes have a sex-dependent EUPLOID copy number (chrX/chrY
+            # are CN 1 in males, chrX is CN 2 in females), so CN != 2 there is not
+            # a somatic CNV and must not be scored as a gain/loss or counted as
+            # non-diploid. Drop them here so every downstream ground-truth metric
+            # (gain/loss/neutral accuracy AND "fraction of the scWGS genome
+            # diploid") is restricted to autosomes -- matching the tumor/normal
+            # classifier separate_tumor_normal_from_ginkgo_segcopy.py, which also
+            # excludes them.
+            if chrom in ("chrX", "chrY", "chr23", "chr24"):
+                continue
             try:
                 start = int(row[1])
                 end = int(row[2])

@@ -260,6 +260,15 @@ def load_segcopy(segcopy_path):
 
 def cnv_profile_from_segcopy(segcopy, focal_max_bp=3_000_000):
     """Per-cell ploidy + FGA, and a per-segment events table. No tumor/normal here."""
+    # Restrict to autosomes. chrX/chrY have a sex-dependent euploid copy number
+    # (X/Y = 1 in males, X = 2 in females), so keeping them makes a perfectly
+    # euploid male cell look aneuploid: its ploidy_meanCN drops below 2 and its
+    # frac_genome_altered picks up all of chrX+chrY. Excluding them matches the
+    # tumor/normal classifier (separate_tumor_normal_from_ginkgo_segcopy.py).
+    _chr = segcopy["CHR"].astype(str)
+    segcopy = segcopy[~_chr.isin(
+        ["chrX", "chrY", "X", "Y", "chr23", "chr24", "23", "24"])]
+
     bin_len = (segcopy["END"] - segcopy["START"]).to_numpy(dtype=float)
     genome_len = float(np.nansum(bin_len))
 

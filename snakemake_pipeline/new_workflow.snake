@@ -1288,7 +1288,7 @@ if always_has_ref_cells:
             mem_mb = 32000
         params:
             time = "48:00:00",
-            expr_filter = "0.1"
+            expr_filter = "1"    # Smart-seq2 co-seq RNA -> inferCNV cutoff 1 (0.1 is the 10x droplet value)
         script:
             "scripts/inferCNV.R"
 
@@ -1339,7 +1339,7 @@ if always_has_ref_cells:
             mem_mb = 32000
         params:
             time = "48:00:00",
-            expr_filter = "0.1"
+            expr_filter = "1"    # Smart-seq2 co-seq RNA -> inferCNV cutoff 1 (0.1 is the 10x droplet value)
         script:
             "scripts/inferCNV.R"
 

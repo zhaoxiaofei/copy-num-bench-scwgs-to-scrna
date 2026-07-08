@@ -19,8 +19,7 @@ print(paste("Load built-in data to check input datatypes",
 "(data are from https://github.com/akdess/CaSpER/blob/master/demo/sCellGBM.R)."))
 # -----------------------------------------------------------------------------
 
-# TODO: remove this absolute path
-source("/stor/zxf/cnv/cnvguider-sc-rna/benchmark_scrnaseq_cnv_callers/snakemake_pipeline/scripts/casper_helpers.R")
+source(file.path(snakemake@scriptdir, "casper_helpers.R"))
 data("scell_gbm")
 
 built_in.data <- scell_gbm$data
