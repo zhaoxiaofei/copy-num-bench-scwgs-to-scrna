@@ -78,10 +78,15 @@ def _is_ref_celltype(celltype):
     """True if the celltype string denotes a normal/reference (diploid control) cell."""
     return str(celltype).strip().lower() in _REF_CELLTYPES
 
+def _is_unknown_celltype(celltype):
+    return str(celltype).strip().lower() in _UNKNOWN_LABELS
+
 
 def _label_of(celltype):
     """Normalise any celltype string to canonical 'reference' / 'tumor'."""
-    return "reference" if _is_ref_celltype(celltype) else "tumor"
+    if _is_ref_celltype(celltype): return "reference"
+    if _is_unknown_celltype(celltype): return "unknown"
+    return "tumor"
 
 
 def _is_empty_fq(fq_value):
@@ -117,7 +122,7 @@ def parse_cells(config):
         rows.append(
             {
                 "cell_id": str(cell_id),
-                "config_celltype": str(celltype).strip(),
+                "config_celltype": _label_of(str(celltype).strip()),
                 "has_dna_fq": not _is_empty_fq(dna_fq1),
                 "has_rna_fq": not _is_empty_fq(rna_fq1),
             }
