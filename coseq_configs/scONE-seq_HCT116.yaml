@@ -2,589 +2,589 @@ dataset: scONE-seq_HCT116
 scWGS_scRNA_prefix: /nfs/wxz/zxf/cnv/coseq-data/scONE-seq-data/umidedup/dedup_fastq
 cellname_celltype_DNAseqFQ1_DNAseqFQ2_RNAseqFQ1_RNAseqFQ2_tup_list:
 - - HCT116_001
-  - T
+  - Tumor
   - /dedup_dna/SRR16194948_GSM5609521_HCT116_scONEseq_001_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16194948_GSM5609521_HCT116_scONEseq_001_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16194948_GSM5609521_HCT116_scONEseq_001_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16194948_GSM5609521_HCT116_scONEseq_001_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_002
-  - T
+  - Tumor
   - /dedup_dna/SRR16194947_GSM5609522_HCT116_scONEseq_002_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16194947_GSM5609522_HCT116_scONEseq_002_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16194947_GSM5609522_HCT116_scONEseq_002_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16194947_GSM5609522_HCT116_scONEseq_002_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_003
-  - T
+  - Tumor
   - /dedup_dna/SRR16194946_GSM5609523_HCT116_scONEseq_003_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16194946_GSM5609523_HCT116_scONEseq_003_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16194946_GSM5609523_HCT116_scONEseq_003_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16194946_GSM5609523_HCT116_scONEseq_003_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_004
-  - T
+  - Tumor
   - /dedup_dna/SRR16195304_GSM5609524_HCT116_scONEseq_004_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195304_GSM5609524_HCT116_scONEseq_004_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195304_GSM5609524_HCT116_scONEseq_004_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195304_GSM5609524_HCT116_scONEseq_004_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_005
-  - T
+  - Tumor
   - /dedup_dna/SRR16195303_GSM5609525_HCT116_scONEseq_005_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195303_GSM5609525_HCT116_scONEseq_005_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195303_GSM5609525_HCT116_scONEseq_005_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195303_GSM5609525_HCT116_scONEseq_005_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_006
-  - T
+  - Tumor
   - /dedup_dna/SRR16195302_GSM5609526_HCT116_scONEseq_006_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195302_GSM5609526_HCT116_scONEseq_006_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195302_GSM5609526_HCT116_scONEseq_006_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195302_GSM5609526_HCT116_scONEseq_006_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_007
-  - T
+  - Tumor
   - /dedup_dna/SRR16195301_GSM5609527_HCT116_scONEseq_007_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195301_GSM5609527_HCT116_scONEseq_007_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195301_GSM5609527_HCT116_scONEseq_007_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195301_GSM5609527_HCT116_scONEseq_007_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_008
-  - T
+  - Tumor
   - /dedup_dna/SRR16195300_GSM5609528_HCT116_scONEseq_008_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195300_GSM5609528_HCT116_scONEseq_008_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195300_GSM5609528_HCT116_scONEseq_008_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195300_GSM5609528_HCT116_scONEseq_008_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_009
-  - T
+  - Tumor
   - /dedup_dna/SRR16195299_GSM5609529_HCT116_scONEseq_009_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195299_GSM5609529_HCT116_scONEseq_009_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195299_GSM5609529_HCT116_scONEseq_009_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195299_GSM5609529_HCT116_scONEseq_009_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_010
-  - T
+  - Tumor
   - /dedup_dna/SRR16195298_GSM5609530_HCT116_scONEseq_010_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195298_GSM5609530_HCT116_scONEseq_010_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195298_GSM5609530_HCT116_scONEseq_010_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195298_GSM5609530_HCT116_scONEseq_010_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_011
-  - T
+  - Tumor
   - /dedup_dna/SRR16195297_GSM5609531_HCT116_scONEseq_011_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195297_GSM5609531_HCT116_scONEseq_011_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195297_GSM5609531_HCT116_scONEseq_011_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195297_GSM5609531_HCT116_scONEseq_011_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_012
-  - T
+  - Tumor
   - /dedup_dna/SRR16195296_GSM5609532_HCT116_scONEseq_012_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195296_GSM5609532_HCT116_scONEseq_012_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195296_GSM5609532_HCT116_scONEseq_012_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195296_GSM5609532_HCT116_scONEseq_012_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_013
-  - T
+  - Tumor
   - /dedup_dna/SRR16195295_GSM5609533_HCT116_scONEseq_013_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195295_GSM5609533_HCT116_scONEseq_013_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195295_GSM5609533_HCT116_scONEseq_013_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195295_GSM5609533_HCT116_scONEseq_013_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_014
-  - T
+  - Tumor
   - /dedup_dna/SRR16195294_GSM5609534_HCT116_scONEseq_014_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195294_GSM5609534_HCT116_scONEseq_014_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195294_GSM5609534_HCT116_scONEseq_014_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195294_GSM5609534_HCT116_scONEseq_014_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_015
-  - T
+  - Tumor
   - /dedup_dna/SRR16195293_GSM5609535_HCT116_scONEseq_015_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195293_GSM5609535_HCT116_scONEseq_015_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195293_GSM5609535_HCT116_scONEseq_015_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195293_GSM5609535_HCT116_scONEseq_015_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_016
-  - T
+  - Tumor
   - /dedup_dna/SRR16195292_GSM5609536_HCT116_scONEseq_016_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195292_GSM5609536_HCT116_scONEseq_016_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195292_GSM5609536_HCT116_scONEseq_016_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195292_GSM5609536_HCT116_scONEseq_016_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_017
-  - T
+  - Tumor
   - /dedup_dna/SRR16195291_GSM5609537_HCT116_scONEseq_017_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195291_GSM5609537_HCT116_scONEseq_017_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195291_GSM5609537_HCT116_scONEseq_017_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195291_GSM5609537_HCT116_scONEseq_017_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_018
-  - T
+  - Tumor
   - /dedup_dna/SRR16195290_GSM5609538_HCT116_scONEseq_018_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195290_GSM5609538_HCT116_scONEseq_018_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195290_GSM5609538_HCT116_scONEseq_018_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195290_GSM5609538_HCT116_scONEseq_018_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_019
-  - T
+  - Tumor
   - /dedup_dna/SRR16195289_GSM5609539_HCT116_scONEseq_019_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195289_GSM5609539_HCT116_scONEseq_019_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195289_GSM5609539_HCT116_scONEseq_019_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195289_GSM5609539_HCT116_scONEseq_019_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_020
-  - T
+  - Tumor
   - /dedup_dna/SRR16195288_GSM5609540_HCT116_scONEseq_020_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195288_GSM5609540_HCT116_scONEseq_020_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195288_GSM5609540_HCT116_scONEseq_020_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195288_GSM5609540_HCT116_scONEseq_020_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_021
-  - T
+  - Tumor
   - /dedup_dna/SRR16195287_GSM5609541_HCT116_scONEseq_021_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195287_GSM5609541_HCT116_scONEseq_021_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195287_GSM5609541_HCT116_scONEseq_021_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195287_GSM5609541_HCT116_scONEseq_021_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_022
-  - T
+  - Tumor
   - /dedup_dna/SRR16195286_GSM5609542_HCT116_scONEseq_022_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195286_GSM5609542_HCT116_scONEseq_022_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195286_GSM5609542_HCT116_scONEseq_022_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195286_GSM5609542_HCT116_scONEseq_022_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_023
-  - T
+  - Tumor
   - /dedup_dna/SRR16195285_GSM5609543_HCT116_scONEseq_023_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195285_GSM5609543_HCT116_scONEseq_023_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195285_GSM5609543_HCT116_scONEseq_023_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195285_GSM5609543_HCT116_scONEseq_023_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_024
-  - T
+  - Tumor
   - /dedup_dna/SRR16195284_GSM5609544_HCT116_scONEseq_024_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195284_GSM5609544_HCT116_scONEseq_024_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195284_GSM5609544_HCT116_scONEseq_024_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195284_GSM5609544_HCT116_scONEseq_024_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_025
-  - T
+  - Tumor
   - /dedup_dna/SRR16195283_GSM5609545_HCT116_scONEseq_025_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195283_GSM5609545_HCT116_scONEseq_025_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195283_GSM5609545_HCT116_scONEseq_025_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195283_GSM5609545_HCT116_scONEseq_025_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_026
-  - T
+  - Tumor
   - /dedup_dna/SRR16195282_GSM5609546_HCT116_scONEseq_026_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195282_GSM5609546_HCT116_scONEseq_026_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195282_GSM5609546_HCT116_scONEseq_026_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195282_GSM5609546_HCT116_scONEseq_026_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_027
-  - T
+  - Tumor
   - /dedup_dna/SRR16195281_GSM5609547_HCT116_scONEseq_027_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195281_GSM5609547_HCT116_scONEseq_027_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195281_GSM5609547_HCT116_scONEseq_027_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195281_GSM5609547_HCT116_scONEseq_027_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_028
-  - T
+  - Tumor
   - /dedup_dna/SRR16195208_GSM5609548_HCT116_scONEseq_028_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195208_GSM5609548_HCT116_scONEseq_028_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195208_GSM5609548_HCT116_scONEseq_028_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195208_GSM5609548_HCT116_scONEseq_028_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_029
-  - T
+  - Tumor
   - /dedup_dna/SRR16195207_GSM5609549_HCT116_scONEseq_029_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195207_GSM5609549_HCT116_scONEseq_029_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195207_GSM5609549_HCT116_scONEseq_029_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195207_GSM5609549_HCT116_scONEseq_029_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_030
-  - T
+  - Tumor
   - /dedup_dna/SRR16195206_GSM5609550_HCT116_scONEseq_030_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195206_GSM5609550_HCT116_scONEseq_030_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195206_GSM5609550_HCT116_scONEseq_030_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195206_GSM5609550_HCT116_scONEseq_030_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_031
-  - T
+  - Tumor
   - /dedup_dna/SRR16195205_GSM5609551_HCT116_scONEseq_031_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195205_GSM5609551_HCT116_scONEseq_031_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195205_GSM5609551_HCT116_scONEseq_031_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195205_GSM5609551_HCT116_scONEseq_031_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_032
-  - T
+  - Tumor
   - /dedup_dna/SRR16195204_GSM5609552_HCT116_scONEseq_032_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195204_GSM5609552_HCT116_scONEseq_032_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195204_GSM5609552_HCT116_scONEseq_032_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195204_GSM5609552_HCT116_scONEseq_032_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_033
-  - T
+  - Tumor
   - /dedup_dna/SRR16195203_GSM5609553_HCT116_scONEseq_033_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195203_GSM5609553_HCT116_scONEseq_033_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195203_GSM5609553_HCT116_scONEseq_033_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195203_GSM5609553_HCT116_scONEseq_033_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_034
-  - T
+  - Tumor
   - /dedup_dna/SRR16195202_GSM5609554_HCT116_scONEseq_034_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195202_GSM5609554_HCT116_scONEseq_034_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195202_GSM5609554_HCT116_scONEseq_034_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195202_GSM5609554_HCT116_scONEseq_034_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_035
-  - T
+  - Tumor
   - /dedup_dna/SRR16195201_GSM5609555_HCT116_scONEseq_035_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195201_GSM5609555_HCT116_scONEseq_035_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195201_GSM5609555_HCT116_scONEseq_035_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195201_GSM5609555_HCT116_scONEseq_035_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_036
-  - T
+  - Tumor
   - /dedup_dna/SRR16195200_GSM5609556_HCT116_scONEseq_036_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195200_GSM5609556_HCT116_scONEseq_036_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195200_GSM5609556_HCT116_scONEseq_036_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195200_GSM5609556_HCT116_scONEseq_036_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_037
-  - T
+  - Tumor
   - /dedup_dna/SRR16195199_GSM5609557_HCT116_scONEseq_037_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195199_GSM5609557_HCT116_scONEseq_037_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195199_GSM5609557_HCT116_scONEseq_037_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195199_GSM5609557_HCT116_scONEseq_037_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_038
-  - T
+  - Tumor
   - /dedup_dna/SRR16195198_GSM5609558_HCT116_scONEseq_038_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195198_GSM5609558_HCT116_scONEseq_038_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195198_GSM5609558_HCT116_scONEseq_038_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195198_GSM5609558_HCT116_scONEseq_038_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_039
-  - T
+  - Tumor
   - /dedup_dna/SRR16195197_GSM5609559_HCT116_scONEseq_039_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195197_GSM5609559_HCT116_scONEseq_039_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195197_GSM5609559_HCT116_scONEseq_039_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195197_GSM5609559_HCT116_scONEseq_039_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_040
-  - T
+  - Tumor
   - /dedup_dna/SRR16195196_GSM5609560_HCT116_scONEseq_040_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195196_GSM5609560_HCT116_scONEseq_040_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195196_GSM5609560_HCT116_scONEseq_040_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195196_GSM5609560_HCT116_scONEseq_040_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_041
-  - T
+  - Tumor
   - /dedup_dna/SRR16195195_GSM5609561_HCT116_scONEseq_041_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195195_GSM5609561_HCT116_scONEseq_041_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195195_GSM5609561_HCT116_scONEseq_041_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195195_GSM5609561_HCT116_scONEseq_041_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_042
-  - T
+  - Tumor
   - /dedup_dna/SRR16195194_GSM5609562_HCT116_scONEseq_042_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195194_GSM5609562_HCT116_scONEseq_042_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195194_GSM5609562_HCT116_scONEseq_042_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195194_GSM5609562_HCT116_scONEseq_042_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_043
-  - T
+  - Tumor
   - /dedup_dna/SRR16195193_GSM5609563_HCT116_scONEseq_043_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195193_GSM5609563_HCT116_scONEseq_043_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195193_GSM5609563_HCT116_scONEseq_043_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195193_GSM5609563_HCT116_scONEseq_043_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_044
-  - T
+  - Tumor
   - /dedup_dna/SRR16195192_GSM5609564_HCT116_scONEseq_044_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195192_GSM5609564_HCT116_scONEseq_044_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195192_GSM5609564_HCT116_scONEseq_044_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195192_GSM5609564_HCT116_scONEseq_044_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_045
-  - T
+  - Tumor
   - /dedup_dna/SRR16195191_GSM5609565_HCT116_scONEseq_045_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195191_GSM5609565_HCT116_scONEseq_045_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195191_GSM5609565_HCT116_scONEseq_045_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195191_GSM5609565_HCT116_scONEseq_045_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_046
-  - T
+  - Tumor
   - /dedup_dna/SRR16195190_GSM5609566_HCT116_scONEseq_046_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195190_GSM5609566_HCT116_scONEseq_046_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195190_GSM5609566_HCT116_scONEseq_046_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195190_GSM5609566_HCT116_scONEseq_046_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_047
-  - T
+  - Tumor
   - /dedup_dna/SRR16195189_GSM5609567_HCT116_scONEseq_047_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195189_GSM5609567_HCT116_scONEseq_047_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195189_GSM5609567_HCT116_scONEseq_047_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195189_GSM5609567_HCT116_scONEseq_047_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_048
-  - T
+  - Tumor
   - /dedup_dna/SRR16195188_GSM5609568_HCT116_scONEseq_048_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195188_GSM5609568_HCT116_scONEseq_048_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195188_GSM5609568_HCT116_scONEseq_048_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195188_GSM5609568_HCT116_scONEseq_048_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_049
-  - T
+  - Tumor
   - /dedup_dna/SRR16195187_GSM5609569_HCT116_scONEseq_049_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195187_GSM5609569_HCT116_scONEseq_049_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195187_GSM5609569_HCT116_scONEseq_049_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195187_GSM5609569_HCT116_scONEseq_049_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_050
-  - T
+  - Tumor
   - /dedup_dna/SRR16195186_GSM5609570_HCT116_scONEseq_050_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195186_GSM5609570_HCT116_scONEseq_050_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195186_GSM5609570_HCT116_scONEseq_050_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195186_GSM5609570_HCT116_scONEseq_050_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_051
-  - T
+  - Tumor
   - /dedup_dna/SRR16195185_GSM5609571_HCT116_scONEseq_051_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195185_GSM5609571_HCT116_scONEseq_051_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195185_GSM5609571_HCT116_scONEseq_051_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195185_GSM5609571_HCT116_scONEseq_051_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_052
-  - T
+  - Tumor
   - /dedup_dna/SRR16195328_GSM5609572_HCT116_scONEseq_052_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195328_GSM5609572_HCT116_scONEseq_052_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195328_GSM5609572_HCT116_scONEseq_052_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195328_GSM5609572_HCT116_scONEseq_052_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_053
-  - T
+  - Tumor
   - /dedup_dna/SRR16195327_GSM5609573_HCT116_scONEseq_053_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195327_GSM5609573_HCT116_scONEseq_053_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195327_GSM5609573_HCT116_scONEseq_053_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195327_GSM5609573_HCT116_scONEseq_053_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_054
-  - T
+  - Tumor
   - /dedup_dna/SRR16195326_GSM5609574_HCT116_scONEseq_054_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195326_GSM5609574_HCT116_scONEseq_054_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195326_GSM5609574_HCT116_scONEseq_054_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195326_GSM5609574_HCT116_scONEseq_054_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_055
-  - T
+  - Tumor
   - /dedup_dna/SRR16195325_GSM5609575_HCT116_scONEseq_055_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195325_GSM5609575_HCT116_scONEseq_055_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195325_GSM5609575_HCT116_scONEseq_055_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195325_GSM5609575_HCT116_scONEseq_055_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_056
-  - T
+  - Tumor
   - /dedup_dna/SRR16195324_GSM5609576_HCT116_scONEseq_056_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195324_GSM5609576_HCT116_scONEseq_056_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195324_GSM5609576_HCT116_scONEseq_056_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195324_GSM5609576_HCT116_scONEseq_056_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_057
-  - T
+  - Tumor
   - /dedup_dna/SRR16195323_GSM5609577_HCT116_scONEseq_057_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195323_GSM5609577_HCT116_scONEseq_057_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195323_GSM5609577_HCT116_scONEseq_057_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195323_GSM5609577_HCT116_scONEseq_057_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_058
-  - T
+  - Tumor
   - /dedup_dna/SRR16195322_GSM5609578_HCT116_scONEseq_058_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195322_GSM5609578_HCT116_scONEseq_058_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195322_GSM5609578_HCT116_scONEseq_058_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195322_GSM5609578_HCT116_scONEseq_058_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_059
-  - T
+  - Tumor
   - /dedup_dna/SRR16195321_GSM5609579_HCT116_scONEseq_059_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195321_GSM5609579_HCT116_scONEseq_059_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195321_GSM5609579_HCT116_scONEseq_059_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195321_GSM5609579_HCT116_scONEseq_059_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_060
-  - T
+  - Tumor
   - /dedup_dna/SRR16195320_GSM5609580_HCT116_scONEseq_060_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195320_GSM5609580_HCT116_scONEseq_060_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195320_GSM5609580_HCT116_scONEseq_060_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195320_GSM5609580_HCT116_scONEseq_060_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_061
-  - T
+  - Tumor
   - /dedup_dna/SRR16195319_GSM5609581_HCT116_scONEseq_061_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195319_GSM5609581_HCT116_scONEseq_061_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195319_GSM5609581_HCT116_scONEseq_061_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195319_GSM5609581_HCT116_scONEseq_061_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_062
-  - T
+  - Tumor
   - /dedup_dna/SRR16195318_GSM5609582_HCT116_scONEseq_062_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195318_GSM5609582_HCT116_scONEseq_062_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195318_GSM5609582_HCT116_scONEseq_062_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195318_GSM5609582_HCT116_scONEseq_062_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_063
-  - T
+  - Tumor
   - /dedup_dna/SRR16195317_GSM5609583_HCT116_scONEseq_063_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195317_GSM5609583_HCT116_scONEseq_063_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195317_GSM5609583_HCT116_scONEseq_063_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195317_GSM5609583_HCT116_scONEseq_063_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_064
-  - T
+  - Tumor
   - /dedup_dna/SRR16195316_GSM5609584_HCT116_scONEseq_064_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195316_GSM5609584_HCT116_scONEseq_064_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195316_GSM5609584_HCT116_scONEseq_064_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195316_GSM5609584_HCT116_scONEseq_064_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_065
-  - T
+  - Tumor
   - /dedup_dna/SRR16195315_GSM5609585_HCT116_scONEseq_065_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195315_GSM5609585_HCT116_scONEseq_065_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195315_GSM5609585_HCT116_scONEseq_065_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195315_GSM5609585_HCT116_scONEseq_065_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_066
-  - T
+  - Tumor
   - /dedup_dna/SRR16195314_GSM5609586_HCT116_scONEseq_066_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195314_GSM5609586_HCT116_scONEseq_066_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195314_GSM5609586_HCT116_scONEseq_066_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195314_GSM5609586_HCT116_scONEseq_066_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_067
-  - T
+  - Tumor
   - /dedup_dna/SRR16195313_GSM5609587_HCT116_scONEseq_067_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195313_GSM5609587_HCT116_scONEseq_067_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195313_GSM5609587_HCT116_scONEseq_067_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195313_GSM5609587_HCT116_scONEseq_067_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_068
-  - T
+  - Tumor
   - /dedup_dna/SRR16195312_GSM5609588_HCT116_scONEseq_068_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195312_GSM5609588_HCT116_scONEseq_068_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195312_GSM5609588_HCT116_scONEseq_068_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195312_GSM5609588_HCT116_scONEseq_068_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_069
-  - T
+  - Tumor
   - /dedup_dna/SRR16195311_GSM5609589_HCT116_scONEseq_069_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195311_GSM5609589_HCT116_scONEseq_069_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195311_GSM5609589_HCT116_scONEseq_069_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195311_GSM5609589_HCT116_scONEseq_069_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_070
-  - T
+  - Tumor
   - /dedup_dna/SRR16195310_GSM5609590_HCT116_scONEseq_070_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195310_GSM5609590_HCT116_scONEseq_070_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195310_GSM5609590_HCT116_scONEseq_070_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195310_GSM5609590_HCT116_scONEseq_070_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_071
-  - T
+  - Tumor
   - /dedup_dna/SRR16195309_GSM5609591_HCT116_scONEseq_071_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195309_GSM5609591_HCT116_scONEseq_071_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195309_GSM5609591_HCT116_scONEseq_071_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195309_GSM5609591_HCT116_scONEseq_071_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_072
-  - T
+  - Tumor
   - /dedup_dna/SRR16195308_GSM5609592_HCT116_scONEseq_072_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195308_GSM5609592_HCT116_scONEseq_072_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195308_GSM5609592_HCT116_scONEseq_072_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195308_GSM5609592_HCT116_scONEseq_072_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_073
-  - T
+  - Tumor
   - /dedup_dna/SRR16195307_GSM5609593_HCT116_scONEseq_073_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195307_GSM5609593_HCT116_scONEseq_073_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195307_GSM5609593_HCT116_scONEseq_073_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195307_GSM5609593_HCT116_scONEseq_073_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_074
-  - T
+  - Tumor
   - /dedup_dna/SRR16195306_GSM5609594_HCT116_scONEseq_074_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195306_GSM5609594_HCT116_scONEseq_074_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195306_GSM5609594_HCT116_scONEseq_074_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195306_GSM5609594_HCT116_scONEseq_074_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_075
-  - T
+  - Tumor
   - /dedup_dna/SRR16195305_GSM5609595_HCT116_scONEseq_075_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195305_GSM5609595_HCT116_scONEseq_075_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195305_GSM5609595_HCT116_scONEseq_075_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195305_GSM5609595_HCT116_scONEseq_075_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_076
-  - T
+  - Tumor
   - /dedup_dna/SRR16195184_GSM5609596_HCT116_scONEseq_076_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195184_GSM5609596_HCT116_scONEseq_076_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195184_GSM5609596_HCT116_scONEseq_076_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195184_GSM5609596_HCT116_scONEseq_076_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_077
-  - T
+  - Tumor
   - /dedup_dna/SRR16195183_GSM5609597_HCT116_scONEseq_077_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195183_GSM5609597_HCT116_scONEseq_077_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195183_GSM5609597_HCT116_scONEseq_077_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195183_GSM5609597_HCT116_scONEseq_077_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_078
-  - T
+  - Tumor
   - /dedup_dna/SRR16195182_GSM5609598_HCT116_scONEseq_078_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195182_GSM5609598_HCT116_scONEseq_078_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195182_GSM5609598_HCT116_scONEseq_078_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195182_GSM5609598_HCT116_scONEseq_078_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_079
-  - T
+  - Tumor
   - /dedup_dna/SRR16195181_GSM5609599_HCT116_scONEseq_079_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195181_GSM5609599_HCT116_scONEseq_079_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195181_GSM5609599_HCT116_scONEseq_079_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195181_GSM5609599_HCT116_scONEseq_079_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_080
-  - T
+  - Tumor
   - /dedup_dna/SRR16195180_GSM5609600_HCT116_scONEseq_080_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195180_GSM5609600_HCT116_scONEseq_080_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195180_GSM5609600_HCT116_scONEseq_080_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195180_GSM5609600_HCT116_scONEseq_080_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_081
-  - T
+  - Tumor
   - /dedup_dna/SRR16195179_GSM5609601_HCT116_scONEseq_081_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195179_GSM5609601_HCT116_scONEseq_081_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195179_GSM5609601_HCT116_scONEseq_081_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195179_GSM5609601_HCT116_scONEseq_081_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_082
-  - T
+  - Tumor
   - /dedup_dna/SRR16195178_GSM5609602_HCT116_scONEseq_082_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195178_GSM5609602_HCT116_scONEseq_082_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195178_GSM5609602_HCT116_scONEseq_082_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195178_GSM5609602_HCT116_scONEseq_082_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_083
-  - T
+  - Tumor
   - /dedup_dna/SRR16195177_GSM5609603_HCT116_scONEseq_083_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195177_GSM5609603_HCT116_scONEseq_083_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195177_GSM5609603_HCT116_scONEseq_083_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195177_GSM5609603_HCT116_scONEseq_083_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_084
-  - T
+  - Tumor
   - /dedup_dna/SRR16195176_GSM5609604_HCT116_scONEseq_084_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195176_GSM5609604_HCT116_scONEseq_084_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195176_GSM5609604_HCT116_scONEseq_084_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195176_GSM5609604_HCT116_scONEseq_084_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_085
-  - T
+  - Tumor
   - /dedup_dna/SRR16195175_GSM5609605_HCT116_scONEseq_085_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195175_GSM5609605_HCT116_scONEseq_085_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195175_GSM5609605_HCT116_scONEseq_085_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195175_GSM5609605_HCT116_scONEseq_085_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_086
-  - T
+  - Tumor
   - /dedup_dna/SRR16195174_GSM5609606_HCT116_scONEseq_086_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195174_GSM5609606_HCT116_scONEseq_086_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195174_GSM5609606_HCT116_scONEseq_086_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195174_GSM5609606_HCT116_scONEseq_086_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_087
-  - T
+  - Tumor
   - /dedup_dna/SRR16195173_GSM5609607_HCT116_scONEseq_087_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195173_GSM5609607_HCT116_scONEseq_087_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195173_GSM5609607_HCT116_scONEseq_087_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195173_GSM5609607_HCT116_scONEseq_087_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_088
-  - T
+  - Tumor
   - /dedup_dna/SRR16195172_GSM5609608_HCT116_scONEseq_088_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195172_GSM5609608_HCT116_scONEseq_088_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195172_GSM5609608_HCT116_scONEseq_088_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195172_GSM5609608_HCT116_scONEseq_088_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_089
-  - T
+  - Tumor
   - /dedup_dna/SRR16195171_GSM5609609_HCT116_scONEseq_089_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195171_GSM5609609_HCT116_scONEseq_089_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195171_GSM5609609_HCT116_scONEseq_089_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195171_GSM5609609_HCT116_scONEseq_089_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_090
-  - T
+  - Tumor
   - /dedup_dna/SRR16195170_GSM5609610_HCT116_scONEseq_090_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195170_GSM5609610_HCT116_scONEseq_090_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195170_GSM5609610_HCT116_scONEseq_090_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195170_GSM5609610_HCT116_scONEseq_090_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_091
-  - T
+  - Tumor
   - /dedup_dna/SRR16195169_GSM5609611_HCT116_scONEseq_091_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195169_GSM5609611_HCT116_scONEseq_091_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195169_GSM5609611_HCT116_scONEseq_091_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195169_GSM5609611_HCT116_scONEseq_091_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_092
-  - T
+  - Tumor
   - /dedup_dna/SRR16195168_GSM5609612_HCT116_scONEseq_092_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195168_GSM5609612_HCT116_scONEseq_092_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195168_GSM5609612_HCT116_scONEseq_092_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195168_GSM5609612_HCT116_scONEseq_092_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_093
-  - T
+  - Tumor
   - /dedup_dna/SRR16195167_GSM5609613_HCT116_scONEseq_093_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195167_GSM5609613_HCT116_scONEseq_093_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195167_GSM5609613_HCT116_scONEseq_093_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195167_GSM5609613_HCT116_scONEseq_093_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_094
-  - T
+  - Tumor
   - /dedup_dna/SRR16195166_GSM5609614_HCT116_scONEseq_094_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195166_GSM5609614_HCT116_scONEseq_094_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195166_GSM5609614_HCT116_scONEseq_094_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195166_GSM5609614_HCT116_scONEseq_094_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_095
-  - T
+  - Tumor
   - /dedup_dna/SRR16195165_GSM5609615_HCT116_scONEseq_095_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195165_GSM5609615_HCT116_scONEseq_095_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195165_GSM5609615_HCT116_scONEseq_095_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195165_GSM5609615_HCT116_scONEseq_095_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_096
-  - T
+  - Tumor
   - /dedup_dna/SRR16195164_GSM5609616_HCT116_scONEseq_096_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195164_GSM5609616_HCT116_scONEseq_096_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195164_GSM5609616_HCT116_scONEseq_096_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195164_GSM5609616_HCT116_scONEseq_096_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_097
-  - T
+  - Tumor
   - /dedup_dna/SRR16195163_GSM5609617_HCT116_scONEseq_097_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195163_GSM5609617_HCT116_scONEseq_097_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195163_GSM5609617_HCT116_scONEseq_097_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_rna/SRR16195163_GSM5609617_HCT116_scONEseq_097_Homo_sapiens_OTHER_dedup_R2.fastq.gz
 - - HCT116_098
-  - T
+  - Tumor
   - /dedup_dna/SRR16195162_GSM5609618_HCT116_scONEseq_098_Homo_sapiens_OTHER_dedup_R1.fastq.gz
   - /dedup_dna/SRR16195162_GSM5609618_HCT116_scONEseq_098_Homo_sapiens_OTHER_dedup_R2.fastq.gz
   - /dedup_rna/SRR16195162_GSM5609618_HCT116_scONEseq_098_Homo_sapiens_OTHER_dedup_R1.fastq.gz
