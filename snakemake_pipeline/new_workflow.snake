@@ -971,7 +971,6 @@ rule create_sample_annotation_1:
         os.makedirs(os.path.dirname(output.annot), exist_ok=True)
         with open(output.annot, "w") as f:
             for cid in ALL_CELL_IDS:
-                cell_type = ('tumor' if (cid in TUM_CELL_IDS) else 'reference')
                 # When the config declined to label cells (all "Unknown"), the
                 # tumor/normal origin is NOT author-provided. Write 'unknown' so
                 # downstream scripts (evaluate_caller_vs_ginkgo.py,
@@ -1005,21 +1004,34 @@ rule create_DNA_best_annotation:
 
 rule create_sample_annotation_2:
     input:
-        annot1 = ORI_CELL_ANNOTATION,
+        #annot1 = ORI_CELL_ANNOTATION,
         in_mat = SELECTED_COUNT_MATRIX, # e.g., cell_by_gene_GeneFull.tsv
     output:
         annot2rna = RNA_CELL_ANNOTATION, # f"data/{DATASET}_input/sample_annotation_2.txt"
-        annot2 = RNA_BEST_ANNOTATION, # f"data/{DATASET}_input/sample_annotation_2.txt"
+        #annot2 = RNA_BEST_ANNOTATION, # f"data/{DATASET}_input/sample_annotation_2.txt"
     log:
         f"logs/{DATASET}/{DATASET}_create_sample_annotation_2.log"
     threads: 1
     run:
         import shutil
         shell(r'''Rscript {workflow.basedir}/scripts/identify_normal_cell_subset.R {input.in_mat}''')
-        if HAS_REF_CELLS:
-            shutil.copy(input.annot1, output.annot2)
-        else:
-            shutil.copy(output.annot2rna, output.annot2)
+
+if HAS_REF_CELLS:
+    rule create_sample_annot2_cp:
+        input:
+            param1 = ORI_CELL_ANNOTATION
+        output:
+            param2 = RNA_BEST_ANNOTATION
+        run:
+            shell(r'''cp {input.param1} {output.param2}''')
+else:
+   rule create_sample_annot2_cp:
+        input:
+            param1 = RNA_CELL_ANNOTATION
+        output:
+            param2 = RNA_BEST_ANNOTATION
+        run:
+            shell(r'''cp {input.param1} {output.param2}''')
 
 rule create_ref_groups:
     output:
@@ -1410,7 +1422,7 @@ if 1:
                 python3 {workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py \
                     --ground-truth {input.ground_truth} \
                     --caller-result {input.copykat} \
-                    --caller-name copykat_predict \
+                    --caller-name copykat_cellline_predict \
                     --gene-pos {input.gene_pos} \
                     --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
                     --output {output.results} \
@@ -1718,7 +1730,7 @@ if 1:
             python3 {workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py \
                 --ground-truth {input.ground_truth} \
                 --caller-result {input.cnv_types} \
-                --caller-name conicsmat \
+                --caller-name conicsmat_predict \
                 --gene-pos {input.gene_pos} \
                 --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
                 --chrom-arm-pos {input.chrom_pos} \
@@ -2023,7 +2035,7 @@ if MODE == "fastq" or MODE == "bam":
             python3 {workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py \
                 --ground-truth {input.ground_truth} \
                 --caller-result {input.numbat_expr} \
-                --caller-name numbat \
+                --caller-name numbat_predict \
                 --gene-pos {input.gene_pos} \
                 --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
                 --output {output.results} \
