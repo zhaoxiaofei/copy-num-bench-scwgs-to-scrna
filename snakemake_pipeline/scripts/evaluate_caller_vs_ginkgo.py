@@ -926,6 +926,59 @@ def compute_cell_classification_benchmark(pred_types, gt_types):
         "roc_auc":         auc,
     }
 
+
+def compute_aneuploidy_score(pred_intervals, baseline):
+    """Per-cell aneuploidy score (MADD) from the scRNA-seq CNV profile.
+
+    MADD = base-pair-weighted mean absolute deviation of the caller's CNV values
+    from the diploid baseline x0:  sum_i w_i * |x_i - x0| / sum_i w_i, with
+    w_i the length (bp) of segment i. Higher = more deviation from diploidy =
+    more likely aneuploid. This is the standard continuous 'CNV score' /
+    'aneuploidy score' used by CopyKAT / inferCNV / SCEVAN benchmarks, here
+    bp-weighted for consistency with the rest of this script (weighted
+    correlations, weighted-median reference baseline).
+
+    `baseline` (x0) is the same diploid level used for gain/loss classification:
+    the reference-derived weighted median when reference cells exist, else the
+    fixed per-format baseline. Returns NaN for an empty profile.
+    """
+    num = 0.0
+    den = 0.0
+    for (_chrom, s, e, val) in pred_intervals:
+        if val is None:
+            continue
+        w = max(1, e - s)
+        num += w * abs(val - baseline)
+        den += w
+    return (num / den) if den > 0 else float("nan")
+
+
+def compute_aneuploidy_auroc(scores, gt_types):
+    """Threshold-agnostic AUROC of a CONTINUOUS per-cell aneuploidy score against
+    the scWGS gold-standard labels.
+
+    gt 'tumor' (aneuploid) = positive class, 'reference' (near-diploid) =
+    negative class; cells whose gt label is neither are dropped, as are cells
+    with a NaN score. Measures how well the scRNA-seq score *ranks* aneuploid
+    cells above near-diploid ones (0.5 = random, ~0.75-0.95 typical for good
+    scRNA-seq CNV callers). Distinct from compute_cell_classification_benchmark's
+    'roc_auc', which scores HARD 0/1 predicted labels (= balanced accuracy).
+    Returns NaN when fewer than 2 usable cells or only one class is present.
+    """
+    pairs = []
+    for s, g in zip(scores, gt_types):
+        if g not in ("tumor", "reference"):
+            continue
+        if s is None or (isinstance(s, float) and math.isnan(s)):
+            continue
+        pairs.append((s, g))
+    if len(pairs) < 2:
+        return float("nan")
+    y_score = [s for s, _g in pairs]
+    y_true  = [1 if g == "tumor" else 0 for _s, g in pairs]
+    return _safe_roc_auc(y_true, y_score)
+
+
 def build_overlap_pairs(gt_intervals, pred_intervals):
     """
     Pair GT and prediction values through interval overlap.
@@ -1047,6 +1100,24 @@ def compute_reference_baseline(cell_pairs, caller_by_cell, ref_annot_dict, calle
 
 def compute_metrics_for_cell(gt_intervals, pred_intervals, caller_format, exome_fraction,
                              baseline=None):
+    # ---- Pure scWGS (Ginkgo ground-truth) diploid fraction for THIS cell ----
+    # Base-pair-weighted fraction of the cell's scWGS genome that Ginkgo calls
+    # neutral (integer CN == 2, i.e. euploid / non-aneuploid). Depends ONLY on
+    # the scWGS ground truth, not on the caller. main() masks it to the cells the
+    # scRNA caller labelled normal/reference and emits it as
+    # "Fraction of the scWGS genome diploid in scRNA-normal cells" (higher is
+    # better: cells the scRNA caller calls normal should be diploid per scWGS).
+    gt_total_bp = 0
+    gt_diploid_bp = 0
+    for (_c, _s, _e, _cn) in gt_intervals:
+        w = _e - _s
+        if w <= 0:
+            continue
+        gt_total_bp += w
+        if classify_gt_cn(_cn) == "neutral":
+            gt_diploid_bp += w
+    scwgs_diploid_fraction = (gt_diploid_bp / gt_total_bp) if gt_total_bp > 0 else float("nan")
+
     # pairs = build_overlap_pairs(gt_intervals, pred_intervals)
     # list of (chrom, ov_start, ov_end, gcn, pval)
     intersect_intervals = build_overlap_intervals(gt_intervals, pred_intervals)
@@ -1063,6 +1134,7 @@ def compute_metrics_for_cell(gt_intervals, pred_intervals, caller_format, exome_
             "Pearson Correlation Coefficient": float("nan"),
             "Spearman Correlation Coefficient": float("nan"),
             "Fraction of the exome with inferred copy numbers": exome_fraction,
+            "_scwgs_diploid_fraction": scwgs_diploid_fraction,
             "n_overlap_pairs": 0,
         }
 
@@ -1152,6 +1224,7 @@ def compute_metrics_for_cell(gt_intervals, pred_intervals, caller_format, exome_
         "CopyNumber gain ROC-AUC": gain_weighted_auc,
         "CopyNumber loss ROC-AUC": loss_weighted_auc,
         "Fraction of the exome with inferred copy numbers": exome_fraction,
+        "_scwgs_diploid_fraction": scwgs_diploid_fraction,
         "n_overlap_pairs": sum(weights), # len(pairs), # number of base-pairs in the evaluated genome intervals
     }
 
@@ -1457,6 +1530,11 @@ def main():
     # ── collect per-cell annotation tuples for the classification benchmarks ──
     cell_ct_sample, cell_ct_dna, cell_ct_rna, cell_ct_real_rna = [], [], [], []
 
+    # Per-cell continuous aneuploidy score (MADD) from the scRNA-seq CNV profile,
+    # collected in the SAME cell order as cell_ct_dna so the two line up for the
+    # threshold-agnostic AUROC (scWGS labels vs RNA score) computed after the loop.
+    madd_scores = []
+
     for gt_cell, pred_cell in cell_pairs:
         gt_id   = cellpath2id(gt_cell)
         pred_id = cellpath2id(pred_cell)
@@ -1476,6 +1554,13 @@ def main():
 
         gt_intervals   = gt_by_cell.get(gt_cell, [])
         pred_intervals = caller_by_cell.get(pred_cell, [])
+
+        # Continuous aneuploidy score (MADD) for this cell, using the same diploid
+        # baseline as the gain/loss classification (reference-derived, else fixed).
+        madd_baseline = (ref_baseline if ref_baseline is not None
+                         else neutral_baseline_for_format(caller_format))
+        madd_scores.append(compute_aneuploidy_score(pred_intervals, madd_baseline))
+
         metrics = compute_metrics_for_cell(
             gt_intervals=gt_intervals,
             pred_intervals=pred_intervals,
@@ -1486,10 +1571,18 @@ def main():
         metrics["Fraction of the cells with inferred copy numbers"] = (
             len(common_cells) / float(len(cell_to_gt_name))
         )
+        # Percent of the scWGS genome that is diploid, reported ONLY for cells the
+        # scRNA caller labelled normal/reference (celltype_real_rna == 'reference');
+        # NaN for every other cell so the heatmap's per-(dataset,method) mean is
+        # taken over the scRNA-normal cells only.
+        scwgs_diploid_fraction = metrics.pop("_scwgs_diploid_fraction", float("nan"))
+        metrics["Fraction of the scWGS genome diploid in scRNA-normal cells"] = (
+            scwgs_diploid_fraction if celltype_real_rna == "reference" else float("nan")
+        )
         summary_rows.append((gt_cell, pred_cell, celltype_sample, metrics.get("n_overlap_pairs", 0)))
 
         for metric_name, metric_value in metrics.items():
-            if metric_name == "n_overlap_pairs":
+            if metric_name == "n_overlap_pairs" or metric_name.startswith("_"):
                 continue
             long_rows.append({
                 "caller":            args.caller_name,
@@ -1540,6 +1633,22 @@ def main():
         # dna_vs_sample is meaningless when sample==dna (all-unknown config).
         "dna_vs_sample": ({} if SAMPLE_IS_UNKNOWN
                           else compute_cell_classification_benchmark(cell_ct_dna, cell_ct_sample)),
+    }
+
+    # Threshold-agnostic tumor-vs-normal AUROC from the CONTINUOUS scRNA-seq
+    # aneuploidy score (MADD), scored against the scWGS (Ginkgo) gold-standard
+    # labels. This answers "can the RNA-seq CNV profile rank aneuploid (tumor)
+    # cells above near-diploid (reference) cells?" and is reported separately from
+    # rna_vs_dna's hard-label 'roc_auc'. n_cells counts cells usable for the AUROC
+    # (labelled tumor/reference with a non-NaN score).
+    _auroc_n = sum(
+        1 for s, g in zip(madd_scores, cell_ct_dna)
+        if g in ("tumor", "reference")
+        and not (s is None or (isinstance(s, float) and math.isnan(s)))
+    )
+    clf_benchmarks["rna_score_vs_dna"] = {
+        "n_cells":                _auroc_n,
+        "aneuploidy_score_auroc": compute_aneuploidy_auroc(madd_scores, cell_ct_dna),
     }
 
     clf_out = os.path.splitext(args.output)[0] + ".cell_classification.tsv"
