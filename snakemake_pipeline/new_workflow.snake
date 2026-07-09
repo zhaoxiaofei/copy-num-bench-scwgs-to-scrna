@@ -696,6 +696,7 @@ rule run_ginkgo_2:
             --genome {params.genome} \
             --binning {params.binning} \
             2>&1 | tee {log}
+        cp {params.bed_dir}/SegCopy {output.segcopy}
         test -f {output.segcopy} || {{ echo "ERROR: Ginkgo did not produce SegCopy" >&2; exit 1; }}
         """
 
@@ -728,6 +729,7 @@ rule run_ginkgo_3:
             --genome {params.genome} \
             --binning {params.binning} \
             2>&1 | tee {log}
+        cp {params.bed_dir}/SegCopy {output.segcopy}
         test -f {output.segcopy} || {{ echo "ERROR: Ginkgo did not produce SegCopy" >&2; exit 1; }}
         """
 
