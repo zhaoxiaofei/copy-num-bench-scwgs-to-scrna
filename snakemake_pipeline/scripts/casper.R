@@ -45,7 +45,13 @@ input_segment_gamma<-as.numeric(snakemake@params$segment_gamma)
 input_expr_cutoff<-snakemake@params$expr_cutoff
 if(is.null(input_expr_cutoff)){
   #input_expr_cutoff<-4.5 # the default threshold
-  input_expr_cutoff<-0.1 # from the 10X tutorial
+  #input_expr_cutoff<-0.1 # from the 10X tutorial
+
+  # This pipeline's co-seq RNA is plate-based Smart-seq (see the --smartseq flag
+  # passed to numbat's pileup_and_phase.R), not 10X droplet data. CaSpER's own
+  # casper_smartseq.R script (used by the older workflow.sm) uses 4.5 for this
+  # same data; 0.1 is the 10X-specific value and is far too permissive here.
+  input_expr_cutoff<-4.5 # the Smartseq threshold
 } else {
   input_expr_cutoff<-as.numeric(input_expr_cutoff)
 }
@@ -161,6 +167,7 @@ object <- CreateCasperObject(raw.data=log.ge,
                              annotation=annotation, method="iterative", 
                              loh=loh, 
                              control.sample.ids=control_cells, 
+                             genomeVersion="hg38", # default is "hg19"; this pipeline supplies hg38 cytoband + annotation
                              cytoband=cytoband_hg38)
 
 # Print some general statistics

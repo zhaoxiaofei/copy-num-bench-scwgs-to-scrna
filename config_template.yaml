@@ -5,6 +5,8 @@ GINKGO_ENV: "ginkgo_env1" # should match the name from install-end2end.sh
 # Please do not modify the following two variable assignments
 ginkgo_genome: "hg19" # do not modify unless
 ginkgo_binning: "variable_175000_48_bwa" # variable_500000_150_bwa # "variable_500000_101_bowtie"
+ginkgo_binning_2: "variable_500000_48_bwa"
+ginkgo_binning_3: "variable_2500000_48_bwa"
 
 # Please set the dataset, scWGS_scRNA_prefix, and cellname_celltype_DNAseqFQ1_DNAseqFQ2_RNAseqFQ1_RNAseqFQ2_tup_list variables here.
 # Here are some example placeholder values

@@ -138,7 +138,10 @@ MODE = "matrix" if _has_matrix_mode else "fastq"
 GINKGO_ENV     = config.get("GINKGO_ENV",      "ginkgo_env1")
 GINKGO_SH      = config.get("GINKGO_SH",       config.get("ginkgo_sh", "/mnt/d/code/ginkgo/cli/ginkgo.sh"))
 GINKGO_GENOME  = config.get("ginkgo_genome",   "hg19")
-GINKGO_BINNING = config.get("ginkgo_binning",  "variable_500000_150_bwa")
+GINKGO_BINNING = config.get("ginkgo_binning", "variable_175000_48_bwa")
+GINKGO_BINNING_2 = config.get("ginkgo_binning_2",  "variable_500000_48_bwa")
+GINKGO_BINNING_2000k_48_bwa = config.get("ginkgo_binning_3",  "variable_2000000_48_bwa")
+
 LIFTOVER_CHAIN = config.get("liftover_chain",  "data/annotations/hg19ToHg38.over.chain.gz")
 LIFTOVER_BIN   = config.get("liftover_bin",    "liftOver")
 # GTF_GRCH38     = config.get("gtf_grch38",      "data/annotations/gencode.v27.annotation.gtf") # later use the GTF from STAR
@@ -664,6 +667,70 @@ rule run_ginkgo:
         test -f {output.segcopy} || {{ echo "ERROR: Ginkgo did not produce SegCopy" >&2; exit 1; }}
         """
 
+rule run_ginkgo_2:
+    input:
+        truth_calls = expand(f"results/{dataset}_ginkgo/truth_calls/{{cell}}.bed", cell=ALL_CELL_IDS)
+    output:
+        segcopy = f"results/{dataset}_ginkgo_2/output/SegCopy"
+    log:
+        f"logs/{DATASET}/{DATASET}_run_ginkgo_2.log"
+    benchmark:
+        f"benchmarks/{DATASET}/{DATASET}_run_ginkgo_2_benchmark.txt"
+    threads: 1
+    resources:
+        mem_mb = 16000
+    params:
+        ginkgo_env = GINKGO_ENV,
+        ginkgo_sh = GINKGO_SH,
+        bed_dir = f"results/{dataset}_ginkgo_2/truth_calls",
+        genome = GINKGO_GENOME,
+        binning = GINKGO_BINNING_2
+    shell:
+        r"""
+        set -euo pipefail
+        rm -r {params.bed_dir} || true
+        mkdir -p $(dirname {output.segcopy}) {params.bed_dir}
+        cp -l {input.truth_calls} {params.bed_dir}/
+        conda run -n {params.ginkgo_env} bash {params.ginkgo_sh} \
+            --input $(realpath {params.bed_dir})/ \
+            --genome {params.genome} \
+            --binning {params.binning} \
+            2>&1 | tee {log}
+        test -f {output.segcopy} || {{ echo "ERROR: Ginkgo did not produce SegCopy" >&2; exit 1; }}
+        """
+
+rule run_ginkgo_3:
+    input:
+        truth_calls = expand(f"results/{dataset}_ginkgo/truth_calls/{{cell}}.bed", cell=ALL_CELL_IDS)
+    output:
+        segcopy = f"results/{dataset}_ginkgo_3/output/SegCopy"
+    log:
+        f"logs/{DATASET}/{DATASET}_run_ginkgo_3.log"
+    benchmark:
+        f"benchmarks/{DATASET}/{DATASET}_run_ginkgo_3_benchmark.txt"
+    threads: 1
+    resources:
+        mem_mb = 16000
+    params:
+        ginkgo_env = GINKGO_ENV,
+        ginkgo_sh = GINKGO_SH,
+        bed_dir = f"results/{dataset}_ginkgo_3/truth_calls",
+        genome = GINKGO_GENOME,
+        binning = GINKGO_BINNING_2000k_48_bwa
+    shell:
+        r"""
+        set -euo pipefail
+        rm -r {params.bed_dir} || true
+        mkdir -p $(dirname {output.segcopy}) {params.bed_dir}
+        cp -l {input.truth_calls} {params.bed_dir}/
+        conda run -n {params.ginkgo_env} bash {params.ginkgo_sh} \
+            --input $(realpath {params.bed_dir})/ \
+            --genome {params.genome} \
+            --binning {params.binning} \
+            2>&1 | tee {log}
+        test -f {output.segcopy} || {{ echo "ERROR: Ginkgo did not produce SegCopy" >&2; exit 1; }}
+        """
+
 rule liftover_ginkgo_results:
     input:
         segcopy = f"results/{dataset}_ginkgo/output/SegCopy"
@@ -1083,12 +1150,12 @@ if 1:
             genome = "hg19" # https://jlaffy.github.io/infercna/reference/useGenome.html
         script:
             "scripts/infercna.R"
-    
+
     rule evaluate_infercna_hg19_without_given_refs:
         input:
             ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated_hg19.csv",
             infercna_cnv = f"results/{mat_specific_dataset}_output/infercna_hg19_unknown_ref/infercna_cna.tsv",
-            gene_pos = GENE_POS_FILE,
+            gene_pos = GENE_POS_FILE_HG19,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
         output:
             results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercna_hg19_without_preclassified_cells.tsv"
@@ -1185,7 +1252,7 @@ if always_has_ref_cells:
         input:
             ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated_hg19.csv",
             infercna_cnv = f"results/{mat_specific_dataset}_output/infercna_hg19_known_ref/infercna_cna.tsv",
-            gene_pos = GENE_POS_FILE,
+            gene_pos = GENE_POS_FILE_HG19,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
         output:
             results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercna_hg19_with_preclassified_cells.tsv"
