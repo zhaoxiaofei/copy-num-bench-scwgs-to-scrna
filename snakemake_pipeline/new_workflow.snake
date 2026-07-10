@@ -137,10 +137,12 @@ MODE = "matrix" if _has_matrix_mode else "fastq"
 
 GINKGO_ENV     = config.get("GINKGO_ENV",      "ginkgo_env1")
 GINKGO_SH      = config.get("GINKGO_SH",       config.get("ginkgo_sh", "/mnt/d/code/ginkgo/cli/ginkgo.sh"))
+GINKGO_ORIG_SH = config.get("GINKGO_ORIG_SH",  config.get("ginkgo_orig_sh", "/mnt/d/code/ginkgo/cli/ginkgo.sh"))
 GINKGO_GENOME  = config.get("ginkgo_genome",   "hg19")
 GINKGO_BINNING = config.get("ginkgo_binning", "variable_175000_48_bwa")
 GINKGO_BINNING_2 = config.get("ginkgo_binning_2",  "variable_500000_48_bwa")
 GINKGO_BINNING_2000k_48_bwa = config.get("ginkgo_binning_3",  "variable_2000000_48_bwa")
+GINKGO_EXTRA_PARAMS = config.get("ginkgo_extra_cmd_line_params", "")
 
 LIFTOVER_CHAIN = config.get("liftover_chain",  "data/annotations/hg19ToHg38.over.chain.gz")
 LIFTOVER_BIN   = config.get("liftover_bin",    "liftOver")
@@ -653,7 +655,8 @@ rule run_ginkgo:
         ginkgo_sh = GINKGO_SH,
         bed_dir = f"results/{dataset}_ginkgo/truth_calls",
         genome = GINKGO_GENOME,
-        binning = GINKGO_BINNING
+        binning = GINKGO_BINNING,
+        extra_params = GINKGO_EXTRA_PARAMS,
     shell:
         r"""
         set -euo pipefail
@@ -661,7 +664,7 @@ rule run_ginkgo:
         conda run -n {params.ginkgo_env} bash {params.ginkgo_sh} \
             --input $(realpath {params.bed_dir})/ \
             --genome {params.genome} \
-            --binning {params.binning} \
+            --binning {params.binning} {params.extra_params} \
             2>&1 | tee {log}
         cp {params.bed_dir}/SegCopy {output.segcopy}
         test -f {output.segcopy} || {{ echo "ERROR: Ginkgo did not produce SegCopy" >&2; exit 1; }}
@@ -684,6 +687,39 @@ rule run_ginkgo_2:
         ginkgo_sh = GINKGO_SH,
         bed_dir = f"results/{dataset}_ginkgo_2/truth_calls",
         genome = GINKGO_GENOME,
+        binning = GINKGO_BINNING_2,    
+    shell:
+        r"""
+        set -euo pipefail
+        rm -r {params.bed_dir} || true
+        mkdir -p $(dirname {output.segcopy}) {params.bed_dir}
+        cp -l {input.truth_calls} {params.bed_dir}/
+        conda run -n {params.ginkgo_env} bash {params.ginkgo_sh} \
+            --input $(realpath {params.bed_dir})/ \
+            --genome {params.genome} \
+            --binning {params.binning} \
+            2>&1 | tee {log}
+        cp {params.bed_dir}/SegCopy {output.segcopy}
+        test -f {output.segcopy} || {{ echo "ERROR: Ginkgo did not produce SegCopy" >&2; exit 1; }}
+        """
+
+rule run_ginkgo_2a_original:
+    input:
+        truth_calls = expand(f"results/{dataset}_ginkgo/truth_calls/{{cell}}.bed", cell=ALL_CELL_IDS)
+    output:
+        segcopy = f"results/{dataset}_ginkgo_2a_original/output/SegCopy"
+    log:
+        f"logs/{DATASET}/{DATASET}_run_ginkgo_2a_original.log"
+    benchmark:
+        f"benchmarks/{DATASET}/{DATASET}_run_ginkgo_2a_original_benchmark.txt"
+    threads: 1
+    resources:
+        mem_mb = 16000
+    params:
+        ginkgo_env = GINKGO_ENV,
+        ginkgo_sh = GINKGO_ORIG_SH,
+        bed_dir = f"results/{dataset}_ginkgo_2a_original/truth_calls",
+        genome = GINKGO_GENOME,
         binning = GINKGO_BINNING_2
     shell:
         r"""
@@ -695,6 +731,40 @@ rule run_ginkgo_2:
             --input $(realpath {params.bed_dir})/ \
             --genome {params.genome} \
             --binning {params.binning} \
+            2>&1 | tee {log}
+        cp {params.bed_dir}/SegCopy {output.segcopy}
+        test -f {output.segcopy} || {{ echo "ERROR: Ginkgo did not produce SegCopy" >&2; exit 1; }}
+        """
+
+rule run_ginkgo_2b_18_22_22_24:
+    input:
+        truth_calls = expand(f"results/{dataset}_ginkgo/truth_calls/{{cell}}.bed", cell=ALL_CELL_IDS)
+    output:
+        segcopy = f"results/{dataset}_ginkgo_2b_18_22_22_24/output/SegCopy"
+    log:
+        f"logs/{DATASET}/{DATASET}_run_ginkgo_2b_18_22_22_24.log"
+    benchmark:
+        f"benchmarks/{DATASET}/{DATASET}_run_ginkgo_2b_18_22_22_24_benchmark.txt"
+    threads: 1
+    resources:
+        mem_mb = 16000
+    params:
+        ginkgo_env = GINKGO_ENV,
+        ginkgo_sh = GINKGO_SH,
+        bed_dir = f"results/{dataset}_ginkgo_2b_18_22_22_24/truth_calls",
+        genome = GINKGO_GENOME,
+        binning = GINKGO_BINNING_2
+    shell:
+        r"""
+        set -euo pipefail
+        rm -r {params.bed_dir} || true
+        mkdir -p $(dirname {output.segcopy}) {params.bed_dir}
+        cp -l {input.truth_calls} {params.bed_dir}/
+        conda run -n {params.ginkgo_env} bash {params.ginkgo_sh} \
+            --input $(realpath {params.bed_dir})/ \
+            --genome {params.genome} \
+            --binning {params.binning} \
+            --ploidy 1.8-2.2,2.2-2.4 \
             2>&1 | tee {log}
         cp {params.bed_dir}/SegCopy {output.segcopy}
         test -f {output.segcopy} || {{ echo "ERROR: Ginkgo did not produce SegCopy" >&2; exit 1; }}

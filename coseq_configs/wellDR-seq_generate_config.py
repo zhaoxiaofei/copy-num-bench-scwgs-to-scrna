@@ -134,7 +134,7 @@ def find_dna_fastq_files(fastq_dir, run_id, layout):
     if layout == 'SINGLE':
         return str(fq1), '-'
     elif layout == 'PAIRED':
-        assert fq2.exists(), f"The file {fq1} does not exist!"
+        assert fq2.exists(), f"The file {fq2} does not exist!"
         return str(fq1), str(fq2)
     else: raise RuntimeError(f"The layout {layout} is invalid for {run_id} in {fastq_dir}")
 

@@ -125,7 +125,9 @@ if (max(l_1) > t) {
   l_1[which(l_1 > t)] = t
   l_1[which(l_1 < (-t))] = (-t)
 } else {
-  mx = min(max(l_1), abs(min(l)))
+  # https://chat.z.ai/c/f51ab3db-ea55-4e03-a137-dd7c60278b65
+  # public link at https://chat.z.ai/c/f51ab3db-ea55-4e03-a137-dd7c60278b65
+  mx = min(max(l_1), abs(min(l_1)))
   sc = t/mx
   l_1 = l_1 * sc
   l_1[which(l_1 > t)] = t

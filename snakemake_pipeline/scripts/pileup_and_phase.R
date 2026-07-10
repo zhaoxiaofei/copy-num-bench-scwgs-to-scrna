@@ -116,8 +116,8 @@ if (bulk) {
 
     for (i in 1:n_samples) {
 
-        bam_file = glue('{outdir}/pileup/{sample}/bam_path.tsv')
-        sample_file = glue('{outdir}/pileup/{sample}/sample.tsv')
+        bam_file = glue('{outdir}/pileup/{samples[i]}/bam_path.tsv')
+        sample_file = glue('{outdir}/pileup/{samples[i]}/sample.tsv')
 
         fwrite(list(bams[i]), bam_file)
         fwrite(list(samples[i]), sample_file)
