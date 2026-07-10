@@ -1,5 +1,6 @@
 # Please modify the following variable assignment
 GINKGO_SH: "/stor/zxf/cnv/cnvguider-sc-rna/ginkgo/cli/ginkgo_parallel.sh" # "/stor/zxf/cnv/cnvguider/data3to4code/ginkgo/cli/ginkgo_2.sh" # "/mnt/d/code/ginkgo/cli/ginkgo.sh"
+GINKGO_ORIG_SH: "/stor/zxf/cnv/cnvguider-sc-rna/ginkgo/cli/ginkgo.sh"  # This is the original version optionally used for testing the parallel version, the original version is not run by default
 GINKGO_ENV: "ginkgo_env1" # should match the name from install-end2end.sh
 
 # Please do not modify the following two variable assignments
