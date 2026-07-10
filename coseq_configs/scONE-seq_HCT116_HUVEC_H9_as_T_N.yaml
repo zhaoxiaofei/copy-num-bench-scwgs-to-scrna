@@ -1,3 +1,7 @@
+# private link: https://chat.deepseek.com/a/chat/s/5042e866-ebfe-43b5-b6f2-3053f25190ee
+# public link: https://chat.deepseek.com/share/s0mvmnkscyjwzgn76k
+ginkgo_extra_cmd_line_params: "--ploidy 1.5-2.5"
+
 dataset: scONE-seq_HCT116_HUVEC_H9_as_T_N
 scWGS_scRNA_prefix: /nfs/wxz/zxf/cnv/coseq-data/scONE-seq-data/umidedup/dedup_fastq
 cellname_celltype_DNAseqFQ1_DNAseqFQ2_RNAseqFQ1_RNAseqFQ2_tup_list:
