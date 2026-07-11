@@ -11,7 +11,7 @@ The config contains a list of 6-element lists:
 If FQ2 is not available, FQ2 will be set to "-".
 
 Usage:
-    python generate_scone_config.py \
+    python scONE-seq_generate_config.py \
         --fq-list fq_file_list.txt \
         --output-dir output_configs \
         --scWGS_scRNA_prefix /common/path/prefix
@@ -151,8 +151,8 @@ def match_dna_rna_by_sample(fq_data):
             rna_fq1 = rna_by_well.get(well, {}).get('R1', '-')
             rna_fq2 = rna_by_well.get(well, {}).get('R2', '-')
 
-            matched_cell = [cell_id, celltype, dna_fq1, dna_fq2, rna_fq1, rna_fq2]
-            if dna_fq1 != '-' and rna_fq1 != '': 
+            matched_cell = [cell_id, celltype.replace('T', 'Tumor').replace('N', 'Normal'), dna_fq1, dna_fq2, rna_fq1, rna_fq2]
+            if dna_fq1 != '-' and rna_fq1 != '-': 
                 # Both available
                 if celltype not in celltype2samplename2record: celltype2samplename2record[celltype] = defaultdict(list)
                 celltype2samplename2record[celltype][sample_name].append(matched_cell)
@@ -176,6 +176,10 @@ def generate_config_yaml(
         normal_cell_list = sorted(celltype2samplename2record['N'][normal_sample])
         cell_list = tumor_cell_list + normal_cell_list
         config = {
+            # The reference to the ploidy range of 1.5 to 2.5.
+            # private link: https://chat.deepseek.com/a/chat/s/5042e866-ebfe-43b5-b6f2-3053f25190ee
+            # public link: https://chat.deepseek.com/share/s0mvmnkscyjwzgn76k
+            'ginkgo_extra_cmd_line_params': '--ploidy 1.5-2.5',
             'dataset': f'scONE-seq_{tumor_sample}_{normal_sample}_as_T_N',
             'scWGS_scRNA_prefix': scWGS_scRNA_prefix,
             'cellname_celltype_DNAseqFQ1_DNAseqFQ2_RNAseqFQ1_RNAseqFQ2_tup_list': cell_list
@@ -187,6 +191,7 @@ def generate_config_yaml(
         sample2record = celltype2samplename2record[celltype]
         for sample, cell_list in sample2record.items():
             config = {
+                'ginkgo_extra_cmd_line_params': '--ploidy 1.5-2.5',
                 'dataset': f'scONE-seq_{sample}',
                 'scWGS_scRNA_prefix': scWGS_scRNA_prefix,
                 'cellname_celltype_DNAseqFQ1_DNAseqFQ2_RNAseqFQ1_RNAseqFQ2_tup_list': cell_list

@@ -142,7 +142,7 @@ GINKGO_GENOME  = config.get("ginkgo_genome",   "hg19")
 GINKGO_BINNING = config.get("ginkgo_binning", "variable_175000_48_bwa")
 GINKGO_BINNING_2 = config.get("ginkgo_binning_2",  "variable_500000_48_bwa")
 GINKGO_BINNING_2000k_48_bwa = config.get("ginkgo_binning_3",  "variable_2000000_48_bwa")
-GINKGO_EXTRA_PARAMS = config.get("ginkgo_extra_cmd_line_params", "")
+GINKGO_EXTRA_PARAMS = config.get("ginkgo_extra_cmd_line_params", "").strip("'").strip('"')
 
 LIFTOVER_CHAIN = config.get("liftover_chain",  "data/annotations/hg19ToHg38.over.chain.gz")
 LIFTOVER_BIN   = config.get("liftover_bin",    "liftOver")

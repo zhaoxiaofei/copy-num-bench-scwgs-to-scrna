@@ -188,7 +188,7 @@ EOF
         cat <<EOF
 # --- DNA alignment to GRCh38: ${grch38_bam} ---
 if [ ! -f "${grch38_bam}.bai" ]; then
-    bwa mem -K ${BWA_MEM_K} t ${BWA_THREADS} "${GRCH38}" ${fq_args} \\
+    bwa mem -K ${BWA_MEM_K} -t ${BWA_THREADS} "${GRCH38}" ${fq_args} \\
         | samtools sort -@ ${SORT_THREADS} -o "${grch38_bam}" - \\
     && samtools index "${grch38_bam}"
 else

@@ -921,19 +921,21 @@ def compute_cell_classification_benchmark(pred_types, gt_types):
     )
     accuracy = (tp + tn) / len(valid)
 
+    # This is balanced accuracy instead of ROC AUC, so skip generating this
+    '''
     auc = (
         sklearn.metrics.roc_auc_score(gt_labels, pred_labels)
         if len(set(gt_labels)) == 2
         else float("nan")
     )
-
+    '''
     return {
         "n_cells":         len(valid),
         "tumor_precision": precision,
         "tumor_recall":    recall,
         "tumor_f1":        f1,
         "accuracy":        accuracy,
-        "roc_auc":         auc,
+        # "roc_auc":         auc,
     }
 
 

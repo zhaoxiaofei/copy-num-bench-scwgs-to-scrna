@@ -233,6 +233,7 @@ def main():
 
         # Determine cell type
         celltype = 'Tumor'
+        if lib_name.startswith('BCIS') or lib_name.startswith('ECIS'): celltype = "Unknown"
 
         # Find DNA run info
         dna_run_id = None
