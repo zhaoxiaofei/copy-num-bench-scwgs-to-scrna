@@ -31,18 +31,23 @@ with one row per dataset and exactly these columns:
 
     dataset
     n_cells_total
-    tumor_purity                     (renamed from tumor_purity_cellfraction__dna)
-    sample_mean_ploidy               (renamed from tumor_sample_ploidy_mean__dna)
+    tumor_purity_from_config          (from config_celltype only; NA if not available)
+    tumor_purity_from_scWGS           (from label_dna, always when available)
+    sample_mean_ploidy                (renamed from tumor_sample_ploidy_mean__dna)
     scRNA_reads_per_cell_mean
     scRNA_reads_per_cell_median
     scWGS_reads_per_cell_mean
     scWGS_reads_per_cell_median
-    ref_and_purity_inference_method               ("pre-given" or "inferred", indicating origin of label)
+    ref_and_purity_inference_method   ("cell_line_metadata" if config_celltype supplied the primary purity, else NA)
 
 The values for the first seven columns are taken from each dataset's own
 dataset_metrics.tsv (written by compute_dataset_metrics.py). The ref_and_purity_inference_method
-column is derived from the per_cell_metrics.tsv file (same directory) by
-inspecting the `config_celltype` and `label_dna` columns.
+column AND the two tumor_purity columns are derived from the per_cell_metrics.tsv
+file (same directory) by inspecting the `config_celltype` and `label_dna`
+columns. BOTH purities are computed independently — `tumor_purity_from_config` is
+ONLY from `config_celltype` (NA if missing), while `tumor_purity_from_scWGS` is
+always from `label_dna`. Thus, the scWGS-inferred purity is always visible, and
+the primary purity (if available from metadata) is shown separately.
 Those file paths are NOT passed in — they are inferred from --input_glob: for
 every evaluation directory the glob touches, the sibling files
 <evaluation_dir>/dataset_metrics.tsv and <evaluation_dir>/per_cell_metrics.tsv
@@ -128,19 +133,23 @@ name2plotname = {
 # ---------------------------------------------------------------------------
 # Columns are taken verbatim from each dataset's dataset_metrics.tsv. Order is
 # preserved in the output; a column missing from a given file becomes NaN.
-# The columns 'tumor_purity' and 'sample_mean_ploidy' are renamed from
-# 'tumor_purity_cellfraction__dna' and 'tumor_sample_ploidy_mean__dna'
-# respectively.
+# The column 'sample_mean_ploidy' is renamed from 'tumor_sample_ploidy_mean__dna'.
+# 'tumor_purity_from_config' is set ONLY from `config_celltype` (pre-given /
+# cell-line metadata). If that column is missing or has no usable non-Unknown
+# labels, the value remains NA (no fallback to DNA).
+# 'tumor_purity_from_scWGS' is ALWAYS computed from `label_dna` alone, so both
+# purities are exposed side-by-side.
 SUMMARY_COLUMNS = [
     "dataset",
     "n_cells_total",
-    "tumor_purity",                     # renamed
-    "sample_mean_ploidy",               # renamed
+    "tumor_purity_from_config",          # from config_celltype only, NA if absent
+    "tumor_purity_from_scWGS",           # from label_dna (always, when available)
+    "sample_mean_ploidy",                # renamed
     "scRNA_reads_per_cell_mean",
     "scRNA_reads_per_cell_median",
     "scWGS_reads_per_cell_mean",
     "scWGS_reads_per_cell_median",
-    "ref_and_purity_inference_method",                     # "pre-given" or "inferred"
+    "ref_and_purity_inference_method",   # "cell_line_metadata" if config supplied the primary purity, else NA
 ]
 # The per-dataset metrics file that lives next to the benchmark eval TSVs.
 DATASET_METRICS_BASENAME = "dataset_metrics.tsv"
@@ -482,58 +491,46 @@ def infer_per_cell_files(input_glob: str):
     return out
 
 
-def compute_tumor_origin_and_purity(per_cell_file: str):
+def compute_tumor_purities(per_cell_file: str):
     """
-    Read a per_cell_metrics.tsv and determine:
-      - origin: "cell_line_metadata" if config_celltype provides definitive labels,
-                else "scWGS_CNV_calls" if label_dna provides labels,
-                else np.nan.
-      - purity: fraction of cells that are tumor (case‑insensitive substring "tumor")
-                among cells that have a definitive label in the chosen column.
+    Read a per_cell_metrics.tsv and compute the tumor purity from BOTH
+    inference methods INDEPENDENTLY (so that both purities are always
+    available side-by-side in the summary table):
+
+      - config_purity: fraction of cells whose label contains "tumor"
+                       (case-insensitive substring) among the non-Unknown,
+                       non-NA values in `config_celltype` (pre-given /
+                       cell-line metadata).
+      - dna_purity:    fraction of cells whose label contains "tumor"
+                       (case-insensitive substring) among the non-NA values
+                       in `label_dna` (inferred from scWGS CNV calls).
 
     Returns:
-        tuple(origin, purity)
+        tuple(config_purity, dna_purity)
+        Either value is np.nan if the corresponding column is missing or
+        has no usable labels.
     """
     try:
         df = pd.read_csv(per_cell_file, sep="\t")
     except Exception:
         return np.nan, np.nan
 
-    has_config = "config_celltype" in df.columns
-    has_label_dna = "label_dna" in df.columns
+    def _purity(colname: str, exclude_unknown: bool = False):
+        if colname not in df.columns:
+            return np.nan
+        valid = df[colname]
+        mask = valid.notna()
+        if exclude_unknown:
+            mask &= ~valid.astype(str).str.lower().str.contains("unknown", na=False)
+        valid = valid[mask]
+        if valid.empty:
+            return np.nan
+        return (valid.astype(str).str.contains("tumor", case=False, na=False).sum()) / len(valid)
 
-    if not has_config and not has_label_dna:
-        return np.nan, np.nan
+    config_purity = _purity("config_celltype", exclude_unknown=True)
+    dna_purity    = _purity("label_dna",       exclude_unknown=False)
 
-    # Determine which column to use for tumor labels
-    use_config = False
-    if has_config:
-        # If any non-Unknown value exists in config_celltype, use it
-        config_vals = df["config_celltype"].astype(str)
-        non_unknown = config_vals[~config_vals.str.lower().str.contains("unknown", na=False)]
-        if not non_unknown.empty:
-            use_config = True
-
-    if use_config:
-        col = "config_celltype"
-        origin = "cell_line_metadata"
-        # Exclude Unknown / NA cells for purity calculation
-        mask = df[col].notna() & (~df[col].astype(str).str.lower().str.contains("unknown", na=False))
-        valid = df.loc[mask, col]
-    elif has_label_dna:
-        col = "label_dna"
-        origin = "scWGS_CNV_calls"
-        mask = df[col].notna()
-        valid = df.loc[mask, col]
-    else:
-        return np.nan, np.nan
-
-    if valid.empty:
-        return origin, np.nan
-
-    # Purity = fraction of valid cells whose label contains "tumor"
-    purity = (valid.astype(str).str.contains("tumor", case=False, na=False).sum()) / len(valid)
-    return origin, purity
+    return config_purity, dna_purity
 
 
 def build_dataset_summary(metrics_files, per_cell_files) -> pd.DataFrame:
@@ -544,10 +541,17 @@ def build_dataset_summary(metrics_files, per_cell_files) -> pd.DataFrame:
     - dataset_metrics.tsv holds one row per dataset; rows are concatenated and
       sorted by dataset name. Duplicate datasets (same name) are collapsed,
       keeping the first non-null value per column.
-    - The columns 'tumor_purity_cellfraction__dna' and
-      'tumor_sample_ploidy_mean__dna' are renamed to 'tumor_purity' and
-      'sample_mean_ploidy' respectively.
-    - The 'ref_and_purity_inference_method' column is derived from per_cell_metrics.tsv.
+    - The column 'sample_mean_ploidy' is renamed from
+      'tumor_sample_ploidy_mean__dna' if present.
+    - The 'tumor_purity_from_config' column is set ONLY from `config_celltype`
+      (pre-given / cell-line metadata). If that column is missing or has no
+      usable non-Unknown labels, the value remains NA (no fallback to DNA).
+    - The 'tumor_purity_from_scWGS' column is ALWAYS set to the value computed
+      from `label_dna` alone (NaN if that column is missing / empty), so the
+      scWGS-inferred purity is always visible next to the primary one.
+    - The 'ref_and_purity_inference_method' column reports the source that
+      supplied the primary purity: "cell_line_metadata" if config_celltype was
+      usable, otherwise NA (since there is no fallback).
     """
     rows = []
     for fp in metrics_files:
@@ -563,9 +567,8 @@ def build_dataset_summary(metrics_files, per_cell_files) -> pd.DataFrame:
         if "dataset" not in df.columns or df["dataset"].isna().all():
             df["dataset"] = dataset_from_path(fp)
 
-        # Rename columns (we will override tumor_purity later with computed value)
+        # Rename only the ploidy column; the purity columns will be overridden later.
         rename_map = {
-            "tumor_purity_cellfraction__dna": "tumor_purity",
             "tumor_sample_ploidy_mean__dna": "sample_mean_ploidy",
         }
         df.rename(columns=rename_map, inplace=True, errors="ignore")
@@ -590,23 +593,29 @@ def build_dataset_summary(metrics_files, per_cell_files) -> pd.DataFrame:
 
     out = out.sort_values("dataset", kind="stable").reset_index(drop=True)
 
-    # ---- Compute origin and purity from per_cell files ----
+    # ---- Compute BOTH purities from per_cell files (independent of each other) ----
+    config_purity_dict = {}
+    dna_purity_dict = {}
     origin_dict = {}
-    purity_dict = {}
     for pcf in per_cell_files:
         ds = dataset_from_path(pcf)
-        origin, purity = compute_tumor_origin_and_purity(pcf)
-        if pd.isna(origin):
-            continue
-        origin_dict[ds] = origin
-        if not pd.isna(purity):
-            purity_dict[ds] = purity
+        config_purity, dna_purity = compute_tumor_purities(pcf)
+        if not pd.isna(config_purity):
+            config_purity_dict[ds] = config_purity
+            origin_dict[ds] = "cell_line_metadata"
+        else:
+            origin_dict[ds] = "scWGS_CNV_calls"
+        # DNA purity is stored regardless, but it does NOT influence origin_dict.
+        if not pd.isna(dna_purity):
+            dna_purity_dict[ds] = dna_purity
 
-    # Override tumor_purity with computed values
-    if purity_dict:
-        out["tumor_purity"] = out["dataset"].map(purity_dict)
+    # tumor_purity_from_scWGS: always reflects the label_dna computation
+    out["tumor_purity_from_scWGS"] = out["dataset"].map(dna_purity_dict)
 
-    # Set ref_and_purity_inference_method with mapped values ("pre-given" or "inferred")
+    # tumor_purity_from_config: only from config_celltype (no fallback)
+    out["tumor_purity_from_config"] = out["dataset"].map(config_purity_dict)
+
+    # ref_and_purity_inference_method: only set if config was available
     if origin_dict:
         out["ref_and_purity_inference_method"] = out["dataset"].map(origin_dict)
     else:
@@ -620,9 +629,6 @@ def write_dataset_summary(input_glob: str, summary_out: str) -> pd.DataFrame:
 
     The file is always written (header-only if no dataset_metrics.tsv is found),
     so the output reliably exists for downstream steps.
-
-    Returns:
-        The built summary DataFrame.
     """
     metrics_files = infer_metrics_files(input_glob)
     per_cell_files = infer_per_cell_files(input_glob)
@@ -636,7 +642,7 @@ def write_dataset_summary(input_glob: str, summary_out: str) -> pd.DataFrame:
 
     summary = build_dataset_summary(metrics_files, per_cell_files)
     os.makedirs(os.path.dirname(summary_out) or ".", exist_ok=True)
-    summary.to_csv(summary_out, sep="\t", index=False, na_rep='nan')
+    summary.to_csv(summary_out, sep="\t", index=False, na_rep='N/A')
     print(f"Dataset summary ({len(summary)} dataset(s)) → {summary_out}")
     return summary
 
@@ -754,8 +760,8 @@ def plot_heatmap(
     title_suffix    : appended to the figure title (e.g. " (tumor cells only)")
     filename_suffix : appended to the output filename before the extension
                       (e.g. "_tumor_only")
-    purity_map      : dict {dataset: tumor_purity} used to decide if an asterisk
-                      is appended to the dataset name (purity < 0.2).
+    purity_map      : dict {dataset: tumor_purity_from_scWGS} used to decide if
+                      an asterisk is appended to the dataset name (purity < 0.2).
     """
     if purity_map is None:
         purity_map = {}
@@ -842,7 +848,7 @@ def plot_heatmap(
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
-    # --- Row labels (dataset names), with asterisk if purity < 20% ---
+    # --- Row labels (dataset names), with asterisk if scWGS purity < 20% ---
     row_labels = []
     asterisk_needed = False
     for ds in pivot_mean.index:
@@ -880,7 +886,7 @@ def plot_heatmap(
 
     # --- Footnote for asterisk ---
     if asterisk_needed:
-        fig.text(0.02, 0.02, "* tumor purity < 20%", fontsize=8, ha="left", va="bottom")
+        fig.text(0.02, 0.02, "* tumor purity (scWGS) < 20%", fontsize=8, ha="left", va="bottom")
 
     fig.tight_layout()
 
@@ -942,7 +948,7 @@ def plot_tumor_only_heatmaps(
         # aggregated_results.tsv written by main(), so downstream steps can pick
         # it up too.
         agg_path = os.path.join(outdir, "aggregated_results_tumor_only.tsv")
-        agg_tumor.to_csv(agg_path, sep="\t", index=False, na_rep='nan')
+        agg_tumor.to_csv(agg_path, sep="\t", index=False, na_rep='N/A')
         print(f"[tumor-only] aggregated data → {agg_path} ({plotted} metric(s))")
 
 
@@ -1017,12 +1023,12 @@ def main():
     summary_out = args.summary_out or os.path.join(args.outdir, "dataset_summary.tsv")
     summary = write_dataset_summary(args.input_glob, summary_out)
 
-    # Build purity map (dataset -> tumor_purity) for asterisk annotation.
+    # Build purity map from scWGS-derived tumor_purity_from_scWGS.
     purity_map = {}
-    if not summary.empty and "tumor_purity" in summary.columns:
+    if not summary.empty and "tumor_purity_from_scWGS" in summary.columns:
         for _, row in summary.iterrows():
             ds = row["dataset"]
-            pur = row["tumor_purity"]
+            pur = row["tumor_purity_from_scWGS"]
             if pd.notna(pur):
                 purity_map[ds] = pur
 
@@ -1075,7 +1081,7 @@ def main():
 
     # Also save the aggregated table as TSV for downstream use
     agg_path = os.path.join(args.outdir, "aggregated_results.tsv")
-    agg.to_csv(agg_path, sep="\t", index=False, na_rep='nan')
+    agg.to_csv(agg_path, sep="\t", index=False, na_rep='N/A')
     print(f"\nAggregated data → {agg_path}")
     print("Done.")
 
