@@ -1,3 +1,4 @@
+ginkgo_binning: variable_500000_48_bwa
 ginkgo_extra_cmd_line_params: --ploidy 1.5-2.5
 dataset: scONE-seq_NPC43_HUVEC_H9_as_T_N
 scWGS_scRNA_prefix: /nfs/wxz/zxf/cnv/coseq-data/scONE-seq-data/umidedup/dedup_fastq

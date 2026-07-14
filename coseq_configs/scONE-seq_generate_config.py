@@ -179,6 +179,7 @@ def generate_config_yaml(
             # The reference to the ploidy range of 1.5 to 2.5.
             # private link: https://chat.deepseek.com/a/chat/s/5042e866-ebfe-43b5-b6f2-3053f25190ee
             # public link: https://chat.deepseek.com/share/s0mvmnkscyjwzgn76k
+            'ginkgo_binning': 'variable_500000_48_bwa', # 500-kb window size from https://www.science.org/doi/10.1126/sciadv.abp8901
             'ginkgo_extra_cmd_line_params': '--ploidy 1.5-2.5',
             'dataset': f'scONE-seq_{tumor_sample}_{normal_sample}_as_T_N',
             'scWGS_scRNA_prefix': scWGS_scRNA_prefix,
@@ -191,6 +192,7 @@ def generate_config_yaml(
         sample2record = celltype2samplename2record[celltype]
         for sample, cell_list in sample2record.items():
             config = {
+                'ginkgo_binning': 'variable_500000_48_bwa',
                 'ginkgo_extra_cmd_line_params': '--ploidy 1.5-2.5',
                 'dataset': f'scONE-seq_{sample}',
                 'scWGS_scRNA_prefix': scWGS_scRNA_prefix,

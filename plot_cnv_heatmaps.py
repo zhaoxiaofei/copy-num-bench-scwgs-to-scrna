@@ -37,10 +37,10 @@ with one row per dataset and exactly these columns:
     scRNA_reads_per_cell_median
     scWGS_reads_per_cell_mean
     scWGS_reads_per_cell_median
-    ref_identification                     ("pre-given" or "inferred", indicating origin of label)
+    ref_and_purity_inference_method               ("pre-given" or "inferred", indicating origin of label)
 
 The values for the first seven columns are taken from each dataset's own
-dataset_metrics.tsv (written by compute_dataset_metrics.py). The ref_identification
+dataset_metrics.tsv (written by compute_dataset_metrics.py). The ref_and_purity_inference_method
 column is derived from the per_cell_metrics.tsv file (same directory) by
 inspecting the `config_celltype` and `label_dna` columns.
 Those file paths are NOT passed in — they are inferred from --input_glob: for
@@ -140,7 +140,7 @@ SUMMARY_COLUMNS = [
     "scRNA_reads_per_cell_median",
     "scWGS_reads_per_cell_mean",
     "scWGS_reads_per_cell_median",
-    "ref_identification",                     # "pre-given" or "inferred"
+    "ref_and_purity_inference_method",                     # "pre-given" or "inferred"
 ]
 # The per-dataset metrics file that lives next to the benchmark eval TSVs.
 DATASET_METRICS_BASENAME = "dataset_metrics.tsv"
@@ -547,7 +547,7 @@ def build_dataset_summary(metrics_files, per_cell_files) -> pd.DataFrame:
     - The columns 'tumor_purity_cellfraction__dna' and
       'tumor_sample_ploidy_mean__dna' are renamed to 'tumor_purity' and
       'sample_mean_ploidy' respectively.
-    - The 'ref_identification' column is derived from per_cell_metrics.tsv.
+    - The 'ref_and_purity_inference_method' column is derived from per_cell_metrics.tsv.
     """
     rows = []
     for fp in metrics_files:
@@ -606,11 +606,11 @@ def build_dataset_summary(metrics_files, per_cell_files) -> pd.DataFrame:
     if purity_dict:
         out["tumor_purity"] = out["dataset"].map(purity_dict)
 
-    # Set ref_identification with mapped values ("pre-given" or "inferred")
+    # Set ref_and_purity_inference_method with mapped values ("pre-given" or "inferred")
     if origin_dict:
-        out["ref_identification"] = out["dataset"].map(origin_dict)
+        out["ref_and_purity_inference_method"] = out["dataset"].map(origin_dict)
     else:
-        out["ref_identification"] = np.nan
+        out["ref_and_purity_inference_method"] = np.nan
 
     return out[SUMMARY_COLUMNS]
 
@@ -620,6 +620,9 @@ def write_dataset_summary(input_glob: str, summary_out: str) -> pd.DataFrame:
 
     The file is always written (header-only if no dataset_metrics.tsv is found),
     so the output reliably exists for downstream steps.
+
+    Returns:
+        The built summary DataFrame.
     """
     metrics_files = infer_metrics_files(input_glob)
     per_cell_files = infer_per_cell_files(input_glob)
@@ -738,6 +741,7 @@ def plot_heatmap(
     dpi: int,
     title_suffix: str = "",
     filename_suffix: str = "",
+    purity_map: dict = None,
 ):
     """
     Draw one figure per metric.
@@ -750,7 +754,12 @@ def plot_heatmap(
     title_suffix    : appended to the figure title (e.g. " (tumor cells only)")
     filename_suffix : appended to the output filename before the extension
                       (e.g. "_tumor_only")
+    purity_map      : dict {dataset: tumor_purity} used to decide if an asterisk
+                      is appended to the dataset name (purity < 0.2).
     """
+    if purity_map is None:
+        purity_map = {}
+
     sub = agg[agg["metric"] == metric].copy()
     if sub.empty:
         return
@@ -833,9 +842,17 @@ def plot_heatmap(
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
-    # --- Short labels ---
-    # short_rows = [short_dataset_label(d) for d in pivot_mean.index]
-    short_rows = [d for d in pivot_mean.index]
+    # --- Row labels (dataset names), with asterisk if purity < 20% ---
+    row_labels = []
+    asterisk_needed = False
+    for ds in pivot_mean.index:
+        purity = purity_map.get(ds, np.nan)
+        if pd.notna(purity) and purity < 0.2:
+            label = ds + "*"
+            asterisk_needed = True
+        else:
+            label = ds
+        row_labels.append(label)
 
     sns.heatmap(
         pivot_mean,
@@ -850,7 +867,7 @@ def plot_heatmap(
         linecolor="#e0e0e0",
         annot_kws={"fontsize": 8, "fontfamily": "monospace", "va": "center"},
         cbar_kws={"label": "Mean value", "shrink": 0.75},
-        yticklabels=short_rows,
+        yticklabels=row_labels,
     )
 
     ax.set_title(metric + title_suffix, fontsize=13, fontweight="bold", pad=14)
@@ -860,6 +877,10 @@ def plot_heatmap(
     ax.tick_params(axis="y", rotation=0, labelsize=9)
 
     ax = heatmap_prettify(ax)
+
+    # --- Footnote for asterisk ---
+    if asterisk_needed:
+        fig.text(0.02, 0.02, "* tumor purity < 20%", fontsize=8, ha="left", va="bottom")
 
     fig.tight_layout()
 
@@ -879,6 +900,7 @@ def plot_tumor_only_heatmaps(
     outdir: str,
     fmt: str,
     dpi: int,
+    purity_map: dict = None,
 ):
     """Generate one heatmap per metric in `metrics`, restricted to tumor cells.
 
@@ -908,6 +930,7 @@ def plot_tumor_only_heatmaps(
             dpi,
             title_suffix=" (tumor cells only)",
             filename_suffix="_tumor_only",
+            purity_map=purity_map,
         )
         plotted += 1
 
@@ -992,7 +1015,16 @@ def main():
     # if the benchmark eval TSVs are unusable. The dataset_metrics.tsv inputs are
     # inferred from --input_glob; no separate path argument is needed.
     summary_out = args.summary_out or os.path.join(args.outdir, "dataset_summary.tsv")
-    write_dataset_summary(args.input_glob, summary_out)
+    summary = write_dataset_summary(args.input_glob, summary_out)
+
+    # Build purity map (dataset -> tumor_purity) for asterisk annotation.
+    purity_map = {}
+    if not summary.empty and "tumor_purity" in summary.columns:
+        for _, row in summary.iterrows():
+            ds = row["dataset"]
+            pur = row["tumor_purity"]
+            if pd.notna(pur):
+                purity_map[ds] = pur
 
     # --- Heatmaps (original behaviour + two extra heatmaps) ---
     data = load_all(args.input_glob, args.file_pattern)
@@ -1022,7 +1054,8 @@ def main():
 
     print(f"\nPlotting {len(metrics_to_plot)} metric heatmaps …")
     for metric in metrics_to_plot:
-        plot_heatmap(agg, metric, args.outdir, args.fmt, args.dpi)
+        plot_heatmap(agg, metric, args.outdir, args.fmt, args.dpi,
+                     purity_map=purity_map)
 
     print("\nPlotting overview …")
     plot_overview(agg, args.outdir, args.fmt, args.dpi)
@@ -1034,7 +1067,8 @@ def main():
         if tumor_metrics:
             print(f"\nPlotting {len(tumor_metrics)} tumor-only metric heatmap(s) …")
             plot_tumor_only_heatmaps(data, tumor_metrics,
-                                      args.outdir, args.fmt, args.dpi)
+                                      args.outdir, args.fmt, args.dpi,
+                                      purity_map=purity_map)
         else:
             print("\n[tumor-only] --tumor_only_metrics is empty; "
                   "no tumor-only heatmaps written.")
