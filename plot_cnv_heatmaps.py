@@ -187,8 +187,8 @@ CLASSIFICATION_BASENAME_SUFFIX = ".cell_classification.tsv"
 CLASSIFICATION_METRIC_SPECS = [
     ("rna_vs_dna", "accuracy",
      "Tumor/normal classification accuracy (scRNA vs scWGS)"),
-    ("rna_score_vs_dna", "aneuploidy_score_auroc",
-     "Tumor/normal classification ROC-AUC (scRNA aneuploidy score vs scWGS)"),
+    ("rna_score_vs_dna", "aneuploidy_score_auroc", # Tumor_normal_classification_ROC_AUC_scRNA_aneuploidy_score_vs_scWGS_aneuploidy_status
+     "Tumor/normal classification ROC-AUC (scRNA aneuploidy score vs scWGS aneuploidy status)"),
 ]
 
 # (2) Emitted per-cell by evaluate_caller_vs_ginkgo.py, already masked to
@@ -217,6 +217,108 @@ DEFAULT_TUMOR_ONLY_METRICS = [
     "CopyNumber loss ROC-AUC",
 ]
 TUMOR_LABEL_PATTERN = "tumor"   # case-insensitive substring match
+
+# What types of plots to generate
+PLOT_TYPES = [
+    "all",
+    "overview",
+    "main",
+    "supp",
+]
+
+# ---------------------------------------------------------------------------
+# Main-text figure: grid of per-(metric, method) swarmplots
+# ---------------------------------------------------------------------------
+# One dot per dataset. Dot colour = tumor-purity range (scWGS-derived);
+# dot shape = study / scDNA-scRNA co-sequencing technology. Rows of the grid
+# are performance metrics, columns are scRNA-seq-based CNV calling methods.
+#
+# Row order below is deliberate: the tumor-only correlation/ROC-AUC metrics
+# first (require filtering to tumor cells via `filter_to_tumor`), then the
+# three all-cells metrics (coverage fractions + the classification ROC-AUC,
+# which is folded into `data` via `load_classification` in main()).
+# NOTE: Spearman Correlation Coefficient is intentionally excluded from this
+# grid (kept in the original per-metric heatmaps) since it correlates very
+# closely with Pearson CC and was judged redundant for this summary figure.
+SWARM_GRID_TUMOR_ONLY_METRICS = [
+    "Pearson Correlation Coefficient",
+    "CopyNumber gain ROC-AUC",
+    "CopyNumber loss ROC-AUC",
+]
+SWARM_GRID_ALL_CELLS_METRICS = [
+    "Fraction_of_the_cells_with_inferred_copy_numbers",
+    "Fraction_of_the_exome_with_inferred_copy_numbers",
+    "Tumor_normal_classification_ROC_AUC_scRNA_aneuploidy_score_vs_scWGS_aneuploidy_status",
+]
+# Row labels shown on the figure (kept short; the underscore-heavy raw metric
+# names above are display-unfriendly).
+SWARM_GRID_ROW_DISPLAY_NAMES = {
+    "Pearson Correlation Coefficient": "Tumor-only PCC",
+    "CopyNumber gain ROC-AUC": "Tumor-only gain\nROC-AUC",
+    "CopyNumber loss ROC-AUC": "Tumor-only loss\nROC-AUC",
+    "Fraction_of_the_cells_with_inferred_copy_numbers": "Fraction of cells\nwith inferred CNs",
+    "Fraction_of_the_exome_with_inferred_copy_numbers": "Fraction of exome\nwith inferred CNs",
+    "Tumor_normal_classification_ROC_AUC_scRNA_aneuploidy_score_vs_scWGS_aneuploidy_status":
+        "Tumor/normal\nclassification ROC-AUC\n\ni.e.,\nscRNA aneuploidy score\nvs\nscWGS aneuploidy status",
+}
+# Full ordered row list for the swarm grid (union of the two lists above, in
+# the order rows are drawn top-to-bottom).
+SWARM_GRID_METRICS = SWARM_GRID_TUMOR_ONLY_METRICS + SWARM_GRID_ALL_CELLS_METRICS
+
+# Hard cap on the number of methods (grid columns); above this the grid gets
+# unreadably wide, so we still plot but raise a loud, hard-to-miss warning.
+MAX_METHODS_FOR_SWARM_GRID = 15
+
+# Tumor-purity (scWGS-derived) colour bins. Edges are inclusive on the left,
+# exclusive on the right, except the last bin which includes 1.0.
+PURITY_BIN_EDGES = [0.0, 0.2, 0.5, 0.8, 1.0 + 1e-9]
+PURITY_BIN_LABELS = ["<20%", "20-50%", "50-80%", ">80%"]
+PURITY_BIN_UNKNOWN_LABEL = "Unknown"
+# Same blue -> orange -> red hue progression as before (low -> high purity),
+# but pushed to much higher HSV saturation (now ~73-99%, vs. ~50-87% in the
+# original ColorBrewer-derived palette) so the four bins are more easily told
+# apart at a glance, especially the two middle bins which were the most
+# washed-out before.
+PURITY_BIN_COLORS = {
+    "<20%":     "#0b5ea8",
+    "20-50%":   "#3aa8d8",
+    "50-80%":   "#ff8c1a",
+    ">80%":     "#d0021b",
+    PURITY_BIN_UNKNOWN_LABEL: "#999999",
+}
+
+# Study / co-sequencing technology, parsed from the plotname prefix in
+# `name2plotname` (e.g. "wellDR-seq_BCIS106T_..." -> "wellDR-seq"). Marker
+# shapes chosen to be distinguishable at small size and in greyscale.
+# Dict order here ALSO controls swarm-plotting draw order in
+# `plot_metric_method_swarm_grid` (wellDR-seq drawn first, then scONE-seq,
+# then DNTR-seq, per request), since that function iterates this dict in
+# insertion order.
+TECHNOLOGY_MARKERS = {
+    "wellDR-seq": "^",  # triangle
+    "scONE-seq": "X", # filled X
+    "DNTR-seq": "s", # square
+}
+TECHNOLOGY_MARKER_UNKNOWN = "D"   # diamond, for any prefix not in the map above
+TECHNOLOGY_UNKNOWN_LABEL = "Other"
+
+# Method (grid column) names to always exclude from the swarm grid, regardless
+# of whether they're present in the underlying data. Applied when building
+# `col_methods` in `plot_metric_method_swarm_grid`.
+SWARM_GRID_EXCLUDED_METHODS = {
+    "copykat_cellline_autoInferRef",
+    "infercna_autoInferRef_hg19",
+    "infercna_hg19",
+}
+
+# Only keep the 'chip1' replicate for wellDR-seq datasets that were split
+# across multiple chips (chip1, chip2, chip3, ...), to avoid one tumor sample
+# contributing multiple near-duplicate points to the same panel. Matched as a
+# literal substring against the (already name2plotname-remapped) dataset
+# name; wellDR-seq datasets with NO chip token at all (e.g. "wellDR3",
+# "Cellline_mixing_experiment_...") are also excluded under this rule, since
+# they don't contain the literal substring "chip1" either.
+WELLDR_SEQ_CHIP1_SUBSTRING = "chip1"
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +371,12 @@ def parse_args():
         "--fmt", default="pdf",
         help="Output figure format: pdf, png, svg (default: pdf)",
     )
-    p.add_argument("--dpi", type=int, default=200, help="DPI for raster formats")
+    p.add_argument("--dpi", type=int, default=300, help="DPI for raster formats")
+    p.add_argument(
+        "--plots", default=",".join(PLOT_TYPES),
+        help="The types of plots that will be generated.",
+    )
+
     return p.parse_args()
 
 
@@ -404,7 +511,7 @@ def load_classification(glob_pattern, file_pattern) -> pd.DataFrame:
             if sel.empty:
                 continue
             sel["dataset"] = ds
-            sel["method"]  = sel["caller"].astype(str).str.strip()
+            sel["method"]  = sel["caller"].astype(str).str.strip().str.replace(r'_predict', r'_autoInferRef')
             sel["metric"]  = heatmap_name
             sel["value"]   = pd.to_numeric(sel["value"], errors="coerce")
             frames.append(sel[["dataset", "method", "metric", "value"]])
@@ -685,6 +792,80 @@ def filter_to_tumor(data: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# 4c. Per-dataset metadata for the swarm-grid figure (technology, purity bin)
+# ---------------------------------------------------------------------------
+def technology_from_dataset(dataset_name: str) -> str:
+    """Recover the study / scWGS-scRNA co-sequencing technology from a
+    (already-remapped) plotname, e.g. 'wellDR-seq_BCIS106T_chip1_…' -> 'wellDR-seq'.
+
+    Falls back to TECHNOLOGY_UNKNOWN_LABEL if the name doesn't start with one
+    of the known prefixes in TECHNOLOGY_MARKERS (e.g. if a dataset slipped
+    through without a name2plotname remap).
+    """
+    prefix = str(dataset_name).split("_", 1)[0]
+    if prefix in TECHNOLOGY_MARKERS:
+        return prefix
+    return TECHNOLOGY_UNKNOWN_LABEL
+
+
+def should_include_dataset_for_swarm_grid(dataset_name: str) -> bool:
+    """Per-dataset inclusion rule for the swarm-grid figure only (does not
+    affect the original heatmaps). Currently implements: for wellDR-seq
+    datasets, keep only the 'chip1' replicate (literal substring match on the
+    dataset name) so a tumor sample split across multiple chips doesn't
+    contribute multiple near-duplicate points to the same panel. wellDR-seq
+    datasets with no chip token at all (e.g. 'wellDR3',
+    'Cellline_mixing_experiment_...') are excluded too, since they don't
+    contain the literal substring 'chip1'. Non-wellDR-seq datasets are always
+    kept (this rule is a no-op for them)."""
+    if technology_from_dataset(dataset_name) != "wellDR-seq":
+        return True
+    return WELLDR_SEQ_CHIP1_SUBSTRING in str(dataset_name)
+
+
+def purity_bin_label(purity) -> str:
+    """Map a scalar tumor_purity_from_scWGS value to one of PURITY_BIN_LABELS,
+    or PURITY_BIN_UNKNOWN_LABEL if NaN / unresolvable."""
+    if purity is None or (isinstance(purity, float) and np.isnan(purity)):
+        return PURITY_BIN_UNKNOWN_LABEL
+    try:
+        purity = float(purity)
+    except (TypeError, ValueError):
+        return PURITY_BIN_UNKNOWN_LABEL
+    for lo, hi, label in zip(PURITY_BIN_EDGES[:-1], PURITY_BIN_EDGES[1:], PURITY_BIN_LABELS):
+        if lo <= purity < hi:
+            return label
+    return PURITY_BIN_UNKNOWN_LABEL
+
+
+def _normalize_metric_key(name: str) -> str:
+    """Loose key for matching metric names across naming conventions used in
+    this codebase, e.g.:
+        'Pearson Correlation Coefficient'                       (spaces)
+        'Fraction_of_the_cells_with_inferred_copy_numbers'      (underscores)
+        'Tumor/normal classification ROC-AUC (scRNA … vs scWGS)' (slashes,
+                                                    parens, hyphens, spaces)
+    Lower-cases and strips every non-alphanumeric character, so the
+    swarm-grid lookup below still finds a metric even if it's spelled with
+    different separators/punctuation than the constant lists above."""
+    return re.sub(r"[^a-z0-9]+", "", str(name).strip().lower())
+
+
+def resolve_metric_name(requested: str, available_metrics) -> str:
+    """Find the actual metric-name string present in `available_metrics` that
+    corresponds to `requested`, tolerating space/underscore/case differences.
+    Returns `requested` unchanged if no match is found (the caller will then
+    correctly report it as missing rather than silently mis-plotting)."""
+    if requested in available_metrics:
+        return requested
+    target_key = _normalize_metric_key(requested)
+    for m in available_metrics:
+        if _normalize_metric_key(m) == target_key:
+            return m
+    return requested
+
+
+# ---------------------------------------------------------------------------
 # 5. Plotting
 # ---------------------------------------------------------------------------
 
@@ -953,6 +1134,342 @@ def plot_tumor_only_heatmaps(
 
 
 # ---------------------------------------------------------------------------
+# 5c. Main-text figure: grid of per-(metric, method) swarmplots
+# ---------------------------------------------------------------------------
+def build_swarm_grid_data(data: pd.DataFrame, purity_map: dict) -> pd.DataFrame:
+    """Assemble the long-format table that feeds `plot_metric_method_swarm_grid`.
+
+    One row per (dataset, method, metric) with the aggregated mean value for
+    that combination, plus two per-dataset metadata columns:
+        purity_bin  -> one of PURITY_BIN_LABELS / PURITY_BIN_UNKNOWN_LABEL
+        technology  -> one of TECHNOLOGY_MARKERS keys / TECHNOLOGY_UNKNOWN_LABEL
+
+    The SWARM_GRID_TUMOR_ONLY_METRICS rows are computed on tumor-only cells
+    (via `filter_to_tumor`); the remaining SWARM_GRID_ALL_CELLS_METRICS rows
+    are computed on all cells. Metric names are resolved leniently
+    (`resolve_metric_name`) so a space/underscore mismatch between the metric
+    names requested here and the actual `metric` values in the eval TSVs does
+    not silently drop a row.
+
+    A dataset-level filter (`should_include_dataset_for_swarm_grid`) and a
+    method-level filter (`SWARM_GRID_EXCLUDED_METHODS`) are both applied here,
+    up front, before any tumor-filtering, aggregation, or the >15-method
+    warning check below — so that warning reflects the method count that will
+    actually appear in the figure, not a pre-exclusion count. Both filters are
+    local to the swarm-grid figure and do not affect the original per-metric
+    heatmaps.
+    """
+    all_datasets = data["dataset"].unique()
+    keep_datasets = [d for d in all_datasets if should_include_dataset_for_swarm_grid(d)]
+    dropped_datasets = sorted(set(all_datasets) - set(keep_datasets))
+    if dropped_datasets:
+        print(f"[swarm-grid] Excluding {len(dropped_datasets)} dataset(s) per the "
+              f"wellDR-seq chip1-only rule: {dropped_datasets}")
+    data = data[data["dataset"].isin(keep_datasets)].copy()
+
+    excluded_methods_present = sorted(set(data["method"].unique()) & SWARM_GRID_EXCLUDED_METHODS)
+    if excluded_methods_present:
+        print(f"[swarm-grid] Excluding {len(excluded_methods_present)} method column(s) "
+              f"per SWARM_GRID_EXCLUDED_METHODS: {excluded_methods_present}")
+    data = data[~data["method"].isin(SWARM_GRID_EXCLUDED_METHODS)].copy()
+
+    available_all = set(data["metric"].unique())
+    tumor_data = filter_to_tumor(data)
+    available_tumor = set(tumor_data["metric"].unique())
+
+    agg_all = aggregate(data)
+    agg_tumor = aggregate(tumor_data) if not tumor_data.empty else pd.DataFrame(
+        columns=["dataset", "method", "metric", "mean", "std", "n", "q1", "q3"])
+
+    frames = []
+    for requested_metric in SWARM_GRID_METRICS:
+        is_tumor_only = requested_metric in SWARM_GRID_TUMOR_ONLY_METRICS
+        source_agg = agg_tumor if is_tumor_only else agg_all
+        available = available_tumor if is_tumor_only else available_all
+
+        resolved = resolve_metric_name(requested_metric, available)
+        sub = source_agg[source_agg["metric"] == resolved].copy()
+        if sub.empty:
+            scope = "tumor-only" if is_tumor_only else "all-cells"
+            print(f"[swarm-grid] WARNING: {requested_metric!r} ({scope}) had no "
+                  f"data at all (resolved lookup name: {resolved!r}); this row "
+                  f"of the swarm grid will be empty.")
+            continue
+
+        sub["metric"] = requested_metric   # normalize back to the requested/display key
+        frames.append(sub[["dataset", "method", "metric", "mean"]])
+
+    if not frames:
+        print("[swarm-grid] No requested metrics resolved to any data; "
+              "skipping the swarm-grid figure entirely.")
+        return pd.DataFrame(columns=["dataset", "method", "metric", "mean",
+                                      "purity_bin", "technology"])
+
+    long_df = pd.concat(frames, ignore_index=True)
+
+    # --- Enforce / warn on the method cap ---
+    n_methods = long_df["method"].nunique()
+    if n_methods > MAX_METHODS_FOR_SWARM_GRID:
+        methods_list = ", ".join(sorted(long_df["method"].unique()))
+        print("\n" + "!" * 78)
+        print(f"!!! WARNING: {n_methods} CNV calling methods found, which exceeds the "
+              f"recommended maximum of {MAX_METHODS_FOR_SWARM_GRID} for the "
+              f"metric-by-method swarmplot grid.")
+        print("!!! The figure will still be generated, but it will likely be too "
+              "wide / crowded to read.")
+        print(f"!!! Consider filtering the input (e.g. via --metrics or by "
+              f"pre-subsetting methods) to <= {MAX_METHODS_FOR_SWARM_GRID} methods.")
+        print(f"!!! Methods found: {methods_list}")
+        print("!" * 78 + "\n")
+
+    # --- Attach per-dataset purity bin and technology ---
+    long_df["purity_bin"] = long_df["dataset"].map(
+        lambda ds: purity_bin_label(purity_map.get(ds, np.nan)))
+    long_df["technology"] = long_df["dataset"].map(technology_from_dataset)
+
+    return long_df
+
+
+def plot_metric_method_swarm_grid(
+    data: pd.DataFrame,
+    purity_map: dict,
+    outdir: str,
+    fmt: str,
+    dpi: int,
+):
+    """Main-text figure: a grid of seaborn swarmplots, one panel per
+    (metric row, method column). Each dot is one dataset; dot colour encodes
+    the scWGS-derived tumor-purity bin, dot marker shape encodes the
+    scWGS-scRNA co-sequencing technology / study. The overall figure area is
+    square, per the figure spec.
+    """
+    long_df = build_swarm_grid_data(data, purity_map)
+    if long_df.empty:
+        print("[swarm-grid] No data to plot; skipping the swarm-grid figure.")
+        return
+
+    # Rows: only metrics that actually resolved to data, in the canonical order.
+    row_metrics = [m for m in SWARM_GRID_METRICS if m in set(long_df["metric"].unique())]
+    missing_rows = [m for m in SWARM_GRID_METRICS if m not in row_metrics]
+    if missing_rows:
+        print(f"[swarm-grid] The following requested rows had no data and will "
+              f"be omitted from the grid: {missing_rows}")
+    if not row_metrics:
+        print("[swarm-grid] No rows resolved to data; skipping the swarm-grid figure.")
+        return
+
+    # Columns: methods sorted alphabetically for a stable, reproducible layout.
+    # (SWARM_GRID_EXCLUDED_METHODS is already applied upstream, in
+    # build_swarm_grid_data, so long_df here is already filtered.)
+    col_methods = sorted(long_df["method"].unique())
+    if not col_methods:
+        print("[swarm-grid] All methods were excluded; skipping the swarm-grid figure.")
+        return
+    n_rows, n_cols = len(row_metrics), len(col_methods)
+
+    # --- Square figure sizing. Panel WIDTH is fixed (keeps column-label
+    #     spacing consistent regardless of grid shape); panel HEIGHT instead
+    #     stretches to fill whatever vertical room is available once the
+    #     canvas side is set by the width-driven extent, clamped to a
+    #     sensible [MIN_PANEL_H, MAX_PANEL_H] range. This avoids the large
+    #     blank band that a FIXED panel height left above the grid whenever
+    #     the grid was much wider than it was tall (many columns, few rows) —
+    #     the canvas was square, but a fixed-height grid inside it wasn't. ---
+    panel_w = 1.1     # inches, fixed panel width
+    MIN_PANEL_H = 1.0  # inches, floor so panels never get unreadably squat
+    MAX_PANEL_H = 4.0  # inches, ceiling so panels don't get absurdly stretched
+                        # when n_rows is very small relative to n_cols
+    # Inches reserved for the shared legend strip at the bottom. Sized with
+    # real clearance on both sides of the legend text itself (not just the
+    # bare minimum up to the grid's nominal edge): axes with no drawn swarm
+    # points (an empty metric x method cell) can render a tight bbox that
+    # dips slightly below the nominal grid bottom edge, so the legend needs
+    # headroom to spare, not a hairline fit.
+    legend_h = 1.25
+    label_pad_left = 1.8   # inches reserved for row labels (metric names) on the left
+    label_pad_top = 0.8    # inches reserved for column labels (method names) on top
+
+    grid_w = panel_w * n_cols
+    # Candidate canvas side if WIDTH is the binding dimension (the common case
+    # here: many method columns, few metric rows). Compute the panel height
+    # that would exactly fill the remaining vertical space on that canvas,
+    # then clamp it — this is what lets the grid actually reach the canvas
+    # edges instead of leaving blank space above/below it.
+    width_driven_side = label_pad_left + grid_w
+    avail_h_if_width_binding = width_driven_side - label_pad_top - legend_h
+    panel_h = avail_h_if_width_binding / n_rows if n_rows > 0 else MIN_PANEL_H
+    panel_h = max(MIN_PANEL_H, min(MAX_PANEL_H, panel_h))
+    grid_h = panel_h * n_rows
+
+    # The figure canvas is a square whose side is set by whichever of the two
+    # candidate extents (label_pad_left + grid_w) or (label_pad_top + grid_h +
+    # legend_h) is larger — using the ALREADY-STRETCHED grid_h from above, so
+    # if MAX_PANEL_H was hit (grid still shorter than the width-driven side,
+    # e.g. very few rows relative to columns) the canvas correctly falls back
+    # to being sized by width with the residual blank space this time
+    # genuinely unavoidable at readable panel proportions, rather than being
+    # silently absorbed. Margins are anchored at FIXED absolute-inch offsets
+    # from the canvas edges (not derived by subtracting content size from
+    # canvas size), so the grid always sits flush against the left/top label
+    # area and the fractions stay valid regardless of which extent was
+    # binding. NOTE: this figure is saved WITHOUT bbox_inches="tight" (see the
+    # savefig call below) — tight-bbox cropping would re-fit the output to the
+    # content's own (non-square) bounding box and defeat this entirely.
+    side = max(width_driven_side, label_pad_top + grid_h + legend_h)
+    fig_w = fig_h = side
+
+    left_frac = label_pad_left / side
+    right_frac = left_frac + grid_w / side
+    bottom_frac = legend_h / side
+    top_frac = bottom_frac + grid_h / side
+
+    fig = plt.figure(figsize=(fig_w, fig_h))
+    gs = fig.add_gridspec(
+        n_rows, n_cols,
+        left=left_frac,
+        right=min(right_frac, 0.995),
+        top=min(top_frac, 0.98),
+        bottom=bottom_frac,
+        wspace=0.15, hspace=0.25,
+    )
+
+    # --- Shared y-limits per row (metric), so dots across methods in the
+    #     same row are visually comparable. ---
+    row_ylims = {}
+    for metric in row_metrics:
+        vals = long_df.loc[long_df["metric"] == metric, "mean"].dropna()
+        if vals.empty:
+            row_ylims[metric] = (0.0, 1.0)
+            continue
+        lo, hi = float(vals.min()), float(vals.max())
+        if metric in CORRELATION_METRICS:
+            lo, hi = -1.0, 1.0
+        elif "ROC-AUC" in metric or "ROC_AUC" in metric or metric in SWARM_GRID_ALL_CELLS_METRICS:
+            lo, hi = 0.0, 1.0
+        else:
+            pad = max(0.02, (hi - lo) * 0.1)
+            lo, hi = lo - pad, hi + pad
+        row_ylims[metric] = (lo, hi)
+
+    for i, metric in enumerate(row_metrics):
+        for j, method in enumerate(col_methods):
+            ax = fig.add_subplot(gs[i, j])
+            cell = long_df[(long_df["metric"] == metric) & (long_df["method"] == method)]
+
+            if not cell.empty:
+                # seaborn's swarmplot has no native categorical->marker-shape
+                # channel, only hue->colour. To get colour=purity_bin AND
+                # shape=technology in one panel, draw one swarmplot call per
+                # technology subgroup, each with its own `marker`.
+                # Limitation: swarm-jitter packing is then computed
+                # independently within each technology subgroup rather than
+                # jointly across the whole cell, so two dots of different
+                # technologies at a near-identical y-value may render closer
+                # together (or overlap) than a single joint swarm call would
+                # have allowed. With the low point-per-cell counts typical
+                # here (one dot per dataset) this is a minor, expected
+                # trade-off rather than a bug.
+                for tech, marker in list(TECHNOLOGY_MARKERS.items()) + \
+                        [(TECHNOLOGY_UNKNOWN_LABEL, TECHNOLOGY_MARKER_UNKNOWN)]:
+                    sub = cell[cell["technology"] == tech]
+                    if sub.empty:
+                        continue
+                    if i % 4 > 0 or j % 4 > 0:
+                        warnings.filterwarnings("ignore", category=UserWarning, module="seaborn")
+                    sns.swarmplot(
+                        data=sub,
+                        x=np.zeros(len(sub)),
+                        y="mean",
+                        hue="purity_bin",
+                        hue_order=PURITY_BIN_LABELS + [PURITY_BIN_UNKNOWN_LABEL],
+                        palette=PURITY_BIN_COLORS,
+                        marker=marker,
+                        ax=ax,
+                        size=6.5,
+                        linewidth=0.4,
+                        edgecolor="black",
+                        legend=False,
+                    )
+                    warnings.filterwarnings("default", category=UserWarning, module="seaborn")
+
+            ax.set_ylim(*row_ylims[metric])
+            ax.set_xlim(-0.6, 0.6)
+            ax.set_xticks([])
+            ax.set_xlabel("")
+
+            if j == 0:
+                display_name = SWARM_GRID_ROW_DISPLAY_NAMES.get(metric, metric)
+                ax.set_ylabel(display_name, fontsize=8, rotation=0,
+                               ha="right", va="center", labelpad=8)
+            else:
+                ax.set_ylabel("")
+                ax.set_yticklabels([])
+
+            ax.tick_params(axis="y", labelsize=6)
+
+            if i == 0:
+                ax.set_title(method.replace('_', '\n'), fontsize=8.5) #(, rotation=35, ha="left", va="bottom")
+            elif i == len(row_metrics) - 1:
+                ax.set_xlabel(method.replace('_', '\n'), fontsize=8.5) #(, rotation=35, ha="left", va="bottom")
+
+            for spine in ("top", "right"):
+                ax.spines[spine].set_visible(False)
+
+    fig.suptitle(
+        "scRNA-seq CNV caller performance across datasets, methods, and metrics",
+        fontsize=12, fontweight="bold", y=0.995,
+    )
+
+    # --- Shared legend: purity-bin colour swatches + technology marker shapes ---
+    from matplotlib.lines import Line2D
+    legend_handles = []
+    for label in PURITY_BIN_LABELS + [PURITY_BIN_UNKNOWN_LABEL]:
+        legend_handles.append(Line2D(
+            [0], [0], marker="o", linestyle="", markersize=7,
+            markerfacecolor=PURITY_BIN_COLORS[label], markeredgecolor="black",
+            markeredgewidth=0.4, label=f"Purity {label}"))
+    for tech, marker in TECHNOLOGY_MARKERS.items():
+        legend_handles.append(Line2D(
+            [0], [0], marker=marker, linestyle="", markersize=7,
+            markerfacecolor="white", markeredgecolor="black",
+            markeredgewidth=0.8, label=str(tech).replace('wellDR-seq', 'wellDR-seq_chip1')))
+    # Only show the "Other" (unrecognized-technology) legend entry if at
+    # least one plotted datapoint actually falls into that bucket; otherwise
+    # it's a dead legend entry that never appears in the figure.
+    if (long_df["technology"] == TECHNOLOGY_UNKNOWN_LABEL).any():
+        legend_handles.append(Line2D(
+            [0], [0], marker=TECHNOLOGY_MARKER_UNKNOWN, linestyle="", markersize=7,
+            markerfacecolor="white", markeredgecolor="black",
+            markeredgewidth=0.8, label=TECHNOLOGY_UNKNOWN_LABEL))
+
+    # Anchor the legend a small margin above the absolute figure bottom edge
+    # (not flush at y=0.0), so there is real clearance below the legend text
+    # as well as above it, within the legend_h zone reserved earlier.
+    legend_y_anchor = 0.15 / side   # ~0.15in margin below the legend itself
+    fig.legend(
+        handles=legend_handles,
+        loc="lower center",
+        ncol=min(4, len(legend_handles)),
+        fontsize=8,
+        frameon=False,
+        bbox_to_anchor=(0.5, legend_y_anchor),
+    )
+
+    out_path = os.path.join(outdir, f"swarm_grid_metric_by_method.{fmt}")
+    # Intentionally NOT bbox_inches="tight" here: this figure's square-canvas
+    # sizing is computed explicitly above, and tight-bbox would crop back to
+    # the (non-square) bounding box of the drawn content, undoing it.
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=dpi)
+    fig.savefig(out_path + '.png', dpi=dpi)
+    plt.close(fig)
+    print(f"  → {out_path}")
+    if n_cols > MAX_METHODS_FOR_SWARM_GRID:
+        print(f"  (NOTE: this figure has {n_cols} method columns, above the "
+              f"recommended {MAX_METHODS_FOR_SWARM_GRID} — see warning above.)")
+
+
+# ---------------------------------------------------------------------------
 # 6. Summary overview: one compact figure with all metrics side-by-side
 #    (mean across datasets for each method)
 # ---------------------------------------------------------------------------
@@ -1009,6 +1526,11 @@ def plot_overview(agg: pd.DataFrame, outdir: str, fmt: str, dpi: int):
     print(f"  → {out_path}")
 
 
+def is_in_plots(kw, plots_str, kw2='all'):
+    plots = plots_str.split(',')
+    return (kw2 in plots) or (kw in plots)
+
+
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
@@ -1058,26 +1580,34 @@ def main():
             print("No requested metrics available; skipping all heatmaps.")
             return
 
-    print(f"\nPlotting {len(metrics_to_plot)} metric heatmaps …")
-    for metric in metrics_to_plot:
-        plot_heatmap(agg, metric, args.outdir, args.fmt, args.dpi,
-                     purity_map=purity_map)
+    if is_in_plots('supp', args.plots):
+        print(f"\nPlotting {len(metrics_to_plot)} metric heatmaps …")
+        for metric in metrics_to_plot:
+            plot_heatmap(agg, metric, args.outdir, args.fmt, args.dpi,
+                         purity_map=purity_map)
 
-    print("\nPlotting overview …")
-    plot_overview(agg, args.outdir, args.fmt, args.dpi)
+    if is_in_plots('overview', args.plots):
+        print("\nPlotting overview …")
+        plot_overview(agg, args.outdir, args.fmt, args.dpi)
 
-    # --- Tumor-only heatmaps (additional figures) ---
-    if not args.no_tumor_only:
-        tumor_metrics = [m.strip() for m in args.tumor_only_metrics.split(",")
-                         if m.strip()]
-        if tumor_metrics:
-            print(f"\nPlotting {len(tumor_metrics)} tumor-only metric heatmap(s) …")
-            plot_tumor_only_heatmaps(data, tumor_metrics,
-                                      args.outdir, args.fmt, args.dpi,
-                                      purity_map=purity_map)
-        else:
-            print("\n[tumor-only] --tumor_only_metrics is empty; "
-                  "no tumor-only heatmaps written.")
+    if is_in_plots('supp', args.plots):
+        # --- Tumor-only heatmaps (additional figures) ---
+        if not args.no_tumor_only:
+            tumor_metrics = [m.strip() for m in args.tumor_only_metrics.split(",")
+                             if m.strip()]
+            if tumor_metrics:
+                print(f"\nPlotting {len(tumor_metrics)} tumor-only metric heatmap(s) …")
+                plot_tumor_only_heatmaps(data, tumor_metrics,
+                                          args.outdir, args.fmt, args.dpi,
+                                          purity_map=purity_map)
+            else:
+                print("\n[tumor-only] --tumor_only_metrics is empty; "
+                      "no tumor-only heatmaps written.")
+
+    if is_in_plots('main', args.plots):
+        # --- Main-text figure: grid of per-(metric, method) swarmplots ---
+        print("\nPlotting metric-by-method swarm grid …")
+        plot_metric_method_swarm_grid(data, purity_map, args.outdir, args.fmt, args.dpi)
 
     # Also save the aggregated table as TSV for downstream use
     agg_path = os.path.join(args.outdir, "aggregated_results.tsv")
