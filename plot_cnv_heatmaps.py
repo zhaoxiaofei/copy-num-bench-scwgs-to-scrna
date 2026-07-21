@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 
+'''
+https://sorryios.ai/chat/c7f1600f-8e4c-4d0e-804f-edbb44344127
+  exclude HG19 performance results
+'''
+
+
 """
 Plot heatmaps of CNV caller benchmarking results, and emit a single per-dataset
 summary table.
@@ -85,6 +91,9 @@ import seaborn as sns
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+LOW_TUMOR_PURITY = "$^A$"
+NO_NORMAL_SET = "$^B$"
+
 name2plotname = {
 "A375_HCA00102_PRJNA603321"              : "DNTR-seq_PRJNA603321_A375_noRefCells",
 "BCIS106T_chip1_SAMN48409192_SRR33511671": "wellDR-seq_BCIS106T_chip1_SRR33511671_tumorNormalMix",
@@ -164,6 +173,23 @@ NON_BENCHMARK_BASENAMES = {
     "cnv_event_sizes.tsv",
     "dataset_summary.tsv",
 }
+
+# Files whose basename contains this substring are excluded wherever
+# --input_glob results are consumed (heatmap eval TSVs, classification TSVs,
+# and the dataset_metrics.tsv / per_cell_metrics.tsv inference for the
+# summary table).
+EXCLUDED_FILENAME_SUBSTRING = "_hg19_with"
+
+
+def _exclude_hg19_with(files):
+    """Drop any path whose basename contains EXCLUDED_FILENAME_SUBSTRING."""
+    kept = [f for f in files
+            if EXCLUDED_FILENAME_SUBSTRING not in os.path.basename(f)]
+    n_excluded = len(files) - len(kept)
+    if n_excluded:
+        print(f"  [filter] excluding {n_excluded} file(s) whose name contains "
+              f"{EXCLUDED_FILENAME_SUBSTRING!r}.")
+    return kept
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +402,13 @@ def parse_args():
         "--plots", default=",".join(PLOT_TYPES),
         help="The types of plots that will be generated.",
     )
+    
+    # NEW: CLI argument for no normal cells glob
+    p.add_argument(
+        "--no_normal_cells_glob",
+        default="./results/*_bams/rna/*.cluster_stat_zero_ref_cells.rds",
+        help=f"Glob for sentinel files written by scripts/identify_normal_cell_subset.R when NO normal-cell cluster was found. Datasets matching this will have '{NO_NORMAL_SET}' appended to their names in plots and TSVs."
+    )
 
     return p.parse_args()
 
@@ -402,6 +435,48 @@ def dataset_from_path(filepath: str) -> str:
     ret = dataset_from_path_1(filepath)
     return name2plotname.get(ret, ret)
 
+# --- NEW HELPER FUNCTIONS FOR NO-NORMAL-CELLS DETECTION ---
+def dataset_from_zero_ref_path(filepath: str) -> str:
+    """Recover the dataset identifier from a sentinel file produced by
+    scripts/identify_normal_cell_subset.R when NO normal-cell cluster was
+    found (the script fell back to the top-scoring cluster and warned).
+    """
+    raw = None
+    for part in Path(filepath).parts:
+        m = re.match(r"^(.+?)_(bams|input)$", part)
+        if m:
+            raw = m.group(1)
+            break
+    if raw is None:
+        raw = Path(filepath).parent.parent.name
+    return name2plotname.get(raw, raw)
+
+def build_no_normal_cells_set(no_normal_cells_glob) -> set:
+    """Return the set of (name2plotname-remapped) dataset names for which
+    scripts/identify_normal_cell_subset.R could NOT identify a normal-cell
+    cluster and fell back to the top-scoring cluster (issuing its warning).
+    """
+    if not no_normal_cells_glob:
+        return set()
+    sentinels = sorted(glob.glob(no_normal_cells_glob, recursive=True))
+    found = {dataset_from_zero_ref_path(s) for s in sentinels}
+    if found:
+        print(f"[no-normal-cells] {len(found)} dataset(s) had no normal-cell "
+              f"cluster identified by identify_normal_cell_subset.R and will "
+              f"be marked with '{NO_NORMAL_SET}': {sorted(found)}")
+    return found
+
+def _suffix_dataset_column(df: pd.DataFrame, no_normal_cells_set: set) -> pd.DataFrame:
+    f"""Return a COPY of `df` with '{NO_NORMAL_SET}' appended to the `dataset` value of
+    every dataset in `no_normal_cells_set`. The input is never mutated."""
+    if not no_normal_cells_set or "dataset" not in df.columns:
+        return df
+    out = df.copy()
+    out["dataset"] = out["dataset"].astype(str).map(
+        lambda d: d + f"{NO_NORMAL_SET}" if d in no_normal_cells_set else d
+    )
+    return out
+
 
 # ---------------------------------------------------------------------------
 # 3. Load and concatenate all TSV files (for the heatmaps)
@@ -410,6 +485,9 @@ def load_all(glob_pattern: str, file_pattern) -> pd.DataFrame:
     files = sorted(glob.glob(glob_pattern, recursive=True))
     if not files:
         sys.exit(f"No files matched: {glob_pattern}")
+
+    # Skip files matching the global exclusion substring
+    files = _exclude_hg19_with(files)
 
     # Skip cell_classification files — different schema
     files = [f for f in files if "cell_classification" not in os.path.basename(f)]
@@ -490,6 +568,7 @@ def load_classification(glob_pattern, file_pattern) -> pd.DataFrame:
     CLASSIFICATION_METRIC_SPECS. One row per dataset x method x heatmap-metric;
     empty frame if none are found."""
     files = sorted(glob.glob(glob_pattern, recursive=True))
+    files = _exclude_hg19_with(files)
     files = [f for f in files
              if os.path.basename(f).endswith(CLASSIFICATION_BASENAME_SUFFIX)]
     if file_pattern:
@@ -540,6 +619,7 @@ def infer_metrics_files(input_glob: str):
     dataset_metrics.tsv in each. Returns a list ordered by dataset name.
     """
     matches = sorted(glob.glob(input_glob, recursive=True))
+    matches = _exclude_hg19_with(matches)
     eval_dirs = []
     seen_dirs = set()
     for m in matches:
@@ -572,6 +652,7 @@ def infer_metrics_files(input_glob: str):
 def infer_per_cell_files(input_glob: str):
     """Same as infer_metrics_files but for per_cell_metrics.tsv."""
     matches = sorted(glob.glob(input_glob, recursive=True))
+    matches = _exclude_hg19_with(matches)
     eval_dirs = []
     seen_dirs = set()
     for m in matches:
@@ -731,7 +812,8 @@ def build_dataset_summary(metrics_files, per_cell_files) -> pd.DataFrame:
     return out[SUMMARY_COLUMNS]
 
 
-def write_dataset_summary(input_glob: str, summary_out: str) -> pd.DataFrame:
+# MODIFIED: Added no_normal_cells_set parameter
+def write_dataset_summary(input_glob: str, summary_out: str, no_normal_cells_set: set = None) -> pd.DataFrame:
     """Infer inputs, build the single combined table, and write it to disk.
 
     The file is always written (header-only if no dataset_metrics.tsv is found),
@@ -749,7 +831,11 @@ def write_dataset_summary(input_glob: str, summary_out: str) -> pd.DataFrame:
 
     summary = build_dataset_summary(metrics_files, per_cell_files)
     os.makedirs(os.path.dirname(summary_out) or ".", exist_ok=True)
-    summary.to_csv(summary_out, sep="\t", index=False, na_rep='N/A')
+    
+    # MODIFIED: Write a '{NO_NORMAL_SET}'-suffixed copy to disk, but return the clean summary
+    summary_out_df = _suffix_dataset_column(summary, no_normal_cells_set or set())
+    summary_out_df.to_csv(summary_out, sep="\t", index=False, na_rep='N/A')
+    
     print(f"Dataset summary ({len(summary)} dataset(s)) → {summary_out}")
     return summary
 
@@ -920,6 +1006,7 @@ def heatmap_prettify(ax):
     return ax
 
 
+# MODIFIED: Added no_normal_cells_set parameter
 def plot_heatmap(
     agg: pd.DataFrame,
     metric: str,
@@ -929,6 +1016,7 @@ def plot_heatmap(
     title_suffix: str = "",
     filename_suffix: str = "",
     purity_map: dict = None,
+    no_normal_cells_set: set = None,
 ):
     """
     Draw one figure per metric.
@@ -943,9 +1031,15 @@ def plot_heatmap(
                       (e.g. "_tumor_only")
     purity_map      : dict {dataset: tumor_purity_from_scWGS} used to decide if
                       an asterisk is appended to the dataset name (purity < 0.2).
+    no_normal_cells_set : set of dataset names where no normal cells were found,
+                          causing '{NO_NORMAL_SET}' to be appended to the dataset name.
     """
     if purity_map is None:
         purity_map = {}
+        
+    # MODIFIED: Initialize no_normal_cells_set
+    if no_normal_cells_set is None:
+        no_normal_cells_set = set()
 
     sub = agg[agg["metric"] == metric].copy()
     if sub.empty:
@@ -1030,15 +1124,19 @@ def plot_heatmap(
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
     # --- Row labels (dataset names), with asterisk if scWGS purity < 20% ---
+    # MODIFIED: Added '{NO_NORMAL_SET}' suffix logic for no_normal_cells_set
     row_labels = []
     asterisk_needed = False
+    double_asterisk_needed = False
     for ds in pivot_mean.index:
+        label = ds
+        if ds in no_normal_cells_set:
+            label += f"{NO_NORMAL_SET}"
+            double_asterisk_needed = True
         purity = purity_map.get(ds, np.nan)
         if pd.notna(purity) and purity < 0.2:
-            label = ds + "*"
+            label += LOW_TUMOR_PURITY
             asterisk_needed = True
-        else:
-            label = ds
         row_labels.append(label)
 
     sns.heatmap(
@@ -1065,9 +1163,12 @@ def plot_heatmap(
 
     ax = heatmap_prettify(ax)
 
-    # --- Footnote for asterisk ---
+    # --- Footnotes for asterisks ---
+    # MODIFIED: Added footnote for double asterisk
+    if double_asterisk_needed:
+        fig.text(0.02, 0.02, f"{NO_NORMAL_SET} no normal-cell cluster identified by identify_normal_cell_subset.R (fell back to top-scoring cluster)", fontsize=8, ha="left", va="bottom")
     if asterisk_needed:
-        fig.text(0.02, 0.02, "* tumor purity (scWGS) < 20%", fontsize=8, ha="left", va="bottom")
+        fig.text(0.02, 0.04, f"{LOW_TUMOR_PURITY} tumor purity (scWGS) < 20%", fontsize=8, ha="left", va="bottom")
 
     fig.tight_layout()
 
@@ -1081,6 +1182,7 @@ def plot_heatmap(
 # ---------------------------------------------------------------------------
 # 5b. Tumor-only heatmaps: one extra figure per metric in `metrics`
 # ---------------------------------------------------------------------------
+# MODIFIED: Added no_normal_cells_set parameter
 def plot_tumor_only_heatmaps(
     data: pd.DataFrame,
     metrics,
@@ -1088,6 +1190,7 @@ def plot_tumor_only_heatmaps(
     fmt: str,
     dpi: int,
     purity_map: dict = None,
+    no_normal_cells_set: set = None,
 ):
     """Generate one heatmap per metric in `metrics`, restricted to tumor cells.
 
@@ -1109,6 +1212,7 @@ def plot_tumor_only_heatmaps(
             print(f"[tumor-only] WARNING: {metric!r} had no tumor rows at all; "
                   f"skipping this tumor-only heatmap.")
             continue
+        # MODIFIED: Pass no_normal_cells_set to plot_heatmap
         plot_heatmap(
             agg_tumor,
             metric,
@@ -1118,6 +1222,7 @@ def plot_tumor_only_heatmaps(
             title_suffix=" (tumor cells only)",
             filename_suffix="_tumor_only",
             purity_map=purity_map,
+            no_normal_cells_set=no_normal_cells_set,
         )
         plotted += 1
 
@@ -1129,7 +1234,9 @@ def plot_tumor_only_heatmaps(
         # aggregated_results.tsv written by main(), so downstream steps can pick
         # it up too.
         agg_path = os.path.join(outdir, "aggregated_results_tumor_only.tsv")
-        agg_tumor.to_csv(agg_path, sep="\t", index=False, na_rep='N/A')
+        # MODIFIED: Write suffixed copy to TSV
+        agg_tumor_out = _suffix_dataset_column(agg_tumor, no_normal_cells_set)
+        agg_tumor_out.to_csv(agg_path, sep="\t", index=False, na_rep='N/A')
         print(f"[tumor-only] aggregated data → {agg_path} ({plotted} metric(s))")
 
 
@@ -1537,13 +1644,17 @@ def is_in_plots(kw, plots_str, kw2='all'):
 def main():
     args = parse_args()
     os.makedirs(args.outdir, exist_ok=True)
+    
+    # NEW: Build the set of datasets with no normal cells identified
+    no_normal_cells_set = build_no_normal_cells_set(args.no_normal_cells_glob)
 
     # --- Single combined summary table ---
     # Built first (and independently of the heatmap data) so it is produced even
     # if the benchmark eval TSVs are unusable. The dataset_metrics.tsv inputs are
     # inferred from --input_glob; no separate path argument is needed.
     summary_out = args.summary_out or os.path.join(args.outdir, "dataset_summary.tsv")
-    summary = write_dataset_summary(args.input_glob, summary_out)
+    # MODIFIED: Pass no_normal_cells_set
+    summary = write_dataset_summary(args.input_glob, summary_out, no_normal_cells_set=no_normal_cells_set)
 
     # Build purity map from scWGS-derived tumor_purity_from_scWGS.
     purity_map = {}
@@ -1583,8 +1694,10 @@ def main():
     if is_in_plots('supp', args.plots):
         print(f"\nPlotting {len(metrics_to_plot)} metric heatmaps …")
         for metric in metrics_to_plot:
+            # MODIFIED: Pass no_normal_cells_set
             plot_heatmap(agg, metric, args.outdir, args.fmt, args.dpi,
-                         purity_map=purity_map)
+                         purity_map=purity_map,
+                         no_normal_cells_set=no_normal_cells_set)
 
     if is_in_plots('overview', args.plots):
         print("\nPlotting overview …")
@@ -1597,9 +1710,11 @@ def main():
                              if m.strip()]
             if tumor_metrics:
                 print(f"\nPlotting {len(tumor_metrics)} tumor-only metric heatmap(s) …")
+                # MODIFIED: Pass no_normal_cells_set
                 plot_tumor_only_heatmaps(data, tumor_metrics,
                                           args.outdir, args.fmt, args.dpi,
-                                          purity_map=purity_map)
+                                          purity_map=purity_map,
+                                          no_normal_cells_set=no_normal_cells_set)
             else:
                 print("\n[tumor-only] --tumor_only_metrics is empty; "
                       "no tumor-only heatmaps written.")
@@ -1611,10 +1726,13 @@ def main():
 
     # Also save the aggregated table as TSV for downstream use
     agg_path = os.path.join(args.outdir, "aggregated_results.tsv")
-    agg.to_csv(agg_path, sep="\t", index=False, na_rep='N/A')
+    # MODIFIED: Write suffixed copy to TSV
+    agg_out = _suffix_dataset_column(agg, no_normal_cells_set)
+    agg_out.to_csv(agg_path, sep="\t", index=False, na_rep='N/A')
     print(f"\nAggregated data → {agg_path}")
     print("Done.")
 
 
 if __name__ == "__main__":
     main()
+
