@@ -3,6 +3,8 @@ GINKGO_SH: "/stor/zxf/cnv/cnvguider-sc-rna/ginkgo/cli/ginkgo_parallel.sh" # "/st
 GINKGO_ORIG_SH: "/stor/zxf/cnv/cnvguider-sc-rna/ginkgo/cli/ginkgo.sh"  # This is the original version optionally used for testing the parallel version, the original version is not run by default
 GINKGO_ENV: "ginkgo_env1" # should match the name from install-end2end.sh
 
+hg19_fasta: "/stor/zxf/cnv/refs/hg19.fa" # This FASTA should be indexed by `bwa index` and `samtools index`
+
 # Please do not modify the following two variable assignments
 ginkgo_genome: "hg19" # do not modify unless
 ginkgo_binning: "variable_175000_48_bwa" # variable_500000_150_bwa # "variable_500000_101_bowtie"
