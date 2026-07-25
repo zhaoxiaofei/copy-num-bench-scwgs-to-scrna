@@ -1072,6 +1072,14 @@ def plot_heatmap(
     if no_normal_cells_set is None:
         no_normal_cells_set = set()
 
+    # Determine the file prefix based on whether the metric is in SWARM_GRID_METRICS
+    normalized_metric = _normalize_metric_key(metric)
+    normalized_swarm_metrics = {_normalize_metric_key(m) for m in SWARM_GRID_METRICS}
+    if normalized_metric in normalized_swarm_metrics:
+        file_prefix = "swarmHeatmap_"
+    else:
+        file_prefix = "heatmap_"
+
     sub = agg[agg["metric"] == metric].copy()
     if sub.empty:
         return
@@ -1197,18 +1205,26 @@ def plot_heatmap(
     # --- Footnotes for asterisks ---
     # MODIFIED: Added footnote for double asterisk
     if double_asterisk_needed:
-        fig.text(0.02, 0.015, f"{NO_NORMAL_SET} no normal-cell cluster identified by identify_normal_cell_subset.R (fell back to top-scoring cluster)", fontsize=9, ha="left", va="bottom")
+        fig.text(0.02, 0.000, f"{NO_NORMAL_SET} no normal-cell cluster identified by identify_normal_cell_subset.R (fell back to top-scoring cluster)", fontsize=9, ha="left", va="bottom")
     if asterisk_needed:
-        fig.text(0.02, 0.030, f"{LOW_TUMOR_PURITY} diploid-like tumor (ploidy-inferred tumor purity (scWGS) < 20%)", fontsize=9, ha="left", va="bottom")
+        fig.text(0.02, 0.015, f"{LOW_TUMOR_PURITY} diploid-like tumor (if assuming non-diploid tumor, then scWGS_tumor_purity < 20% (rare event), so the assumption fails)", fontsize=9, ha="left", va="bottom")
 
     fig.tight_layout()
 
     safe_name = re.sub(r"[^\w]+", "_", metric).strip("_")
-    out_path = os.path.join(outdir, f"heatmap_{safe_name}{filename_suffix}.{fmt}")
+    out_path = os.path.join(outdir, f"{file_prefix}{safe_name}{filename_suffix}.{fmt}")
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
-    pivot_mean.to_csv(out_path + '.tsv', sep='\t', index=True)
+    
+    # Generate two TSV files representing the means and variances in each heatmap
+    mean_tsv_path = out_path.replace(f".{fmt}", "_mean.tsv")
+    var_tsv_path = out_path.replace(f".{fmt}", "_var.tsv")
+    pivot_var = pivot_std.pow(2)
+    pivot_mean.to_csv(mean_tsv_path, sep='\t', index=True)
+    pivot_var.to_csv(var_tsv_path, sep='\t', index=True)
     print(f"  → {out_path}")
+    print(f"  → {mean_tsv_path}")
+    print(f"  → {var_tsv_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -1780,5 +1796,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
