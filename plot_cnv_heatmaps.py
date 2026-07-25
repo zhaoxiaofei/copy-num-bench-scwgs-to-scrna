@@ -346,6 +346,17 @@ SWARM_GRID_EXCLUDED_METHODS = {
 # they don't contain the literal substring "chip1" either.
 WELLDR_SEQ_CHIP1_SUBSTRING = "chip1"
 
+# Minimum scWGS-based tumor purity (fraction of tumor cells per the DNA-based
+# label) required for a wellDR-seq dataset to appear in the main strip plot.
+# Datasets with tumor_purity_from_scWGS strictly below this threshold are
+# dropped from the main-text figure, on top of the chip1-only rule above.
+# Datasets whose purity is unknown (NaN / not present in the purity map) are
+# kept, mirroring the LOW_TUMOR_PURITY marker convention (no marker when
+# purity is unknown). Mirrors the "< 20%" cutoff used by the LOW_TUMOR_PURITY
+# marker in the per-metric heatmaps (see fig legend at the bottom of the
+# heatmap figures).
+WELLDR_SEQ_MIN_SCWGS_PURITY = 0.2
+
 
 # ---------------------------------------------------------------------------
 # 1. Parse arguments
@@ -894,19 +905,39 @@ def technology_from_dataset(dataset_name: str) -> str:
     return TECHNOLOGY_UNKNOWN_LABEL
 
 
-def should_include_dataset_for_swarm_grid(dataset_name: str) -> bool:
+def should_include_dataset_for_swarm_grid(dataset_name: str, purity_map: dict = None) -> bool:
     """Per-dataset inclusion rule for the swarm-grid figure only (does not
-    affect the original heatmaps). Currently implements: for wellDR-seq
-    datasets, keep only the 'chip1' replicate (literal substring match on the
-    dataset name) so a tumor sample split across multiple chips doesn't
-    contribute multiple near-duplicate points to the same panel. wellDR-seq
-    datasets with no chip token at all (e.g. 'wellDR3',
-    'Cellline_mixing_experiment_...') are excluded too, since they don't
-    contain the literal substring 'chip1'. Non-wellDR-seq datasets are always
-    kept (this rule is a no-op for them)."""
+    affect the original heatmaps). For wellDR-seq datasets two conditions
+    must hold, in this order:
+
+    1. The dataset name must contain the literal substring 'chip1' (matched
+       against the already name2plotname-remapped dataset name). This drops
+       the chip2/chip3/... replicates of a tumor sample that was split across
+       multiple chips, plus wellDR-seq datasets with no chip token at all
+       (e.g. 'wellDR3', 'Cellline_mixing_experiment_...'), since they don't
+       contain 'chip1' either.
+    2. The scWGS-based tumor purity (tumor_purity_from_scWGS, looked up in
+       `purity_map`) must be either unknown (NaN / not present) OR at least
+       `WELLDR_SEQ_MIN_SCWGS_PURITY`. Datasets with a known purity strictly
+       below that threshold are excluded from the main-text figure, on top
+       of the chip1 rule.
+
+    Non-wellDR-seq datasets are always kept (both rules are no-ops for
+    them)."""
     if technology_from_dataset(dataset_name) != "wellDR-seq":
         return True
-    return WELLDR_SEQ_CHIP1_SUBSTRING in str(dataset_name)
+    if WELLDR_SEQ_CHIP1_SUBSTRING not in str(dataset_name):
+        return False
+    if purity_map is None:
+        return True
+    pur = purity_map.get(dataset_name, np.nan)
+    if pur is None or (isinstance(pur, float) and np.isnan(pur)):
+        return True  # unknown purity → keep (mirrors the LOW_TUMOR_PURITY marker)
+    try:
+        pur = float(pur)
+    except (TypeError, ValueError):
+        return True  # unparseable purity → keep
+    return pur >= WELLDR_SEQ_MIN_SCWGS_PURITY
 
 
 def purity_bin_label(purity) -> str:
@@ -1130,13 +1161,13 @@ def plot_heatmap(
     double_asterisk_needed = False
     for ds in pivot_mean.index:
         label = ds
-        if ds in no_normal_cells_set:
-            label += f"{NO_NORMAL_SET}"
-            double_asterisk_needed = True
         purity = purity_map.get(ds, np.nan)
         if pd.notna(purity) and purity < 0.2:
             label += LOW_TUMOR_PURITY
             asterisk_needed = True
+        if ds in no_normal_cells_set:
+            label += f"{NO_NORMAL_SET}"
+            double_asterisk_needed = True
         row_labels.append(label)
 
     sns.heatmap(
@@ -1166,9 +1197,9 @@ def plot_heatmap(
     # --- Footnotes for asterisks ---
     # MODIFIED: Added footnote for double asterisk
     if double_asterisk_needed:
-        fig.text(0.02, 0.02, f"{NO_NORMAL_SET} no normal-cell cluster identified by identify_normal_cell_subset.R (fell back to top-scoring cluster)", fontsize=8, ha="left", va="bottom")
+        fig.text(0.02, 0.015, f"{NO_NORMAL_SET} no normal-cell cluster identified by identify_normal_cell_subset.R (fell back to top-scoring cluster)", fontsize=9, ha="left", va="bottom")
     if asterisk_needed:
-        fig.text(0.02, 0.04, f"{LOW_TUMOR_PURITY} tumor purity (scWGS) < 20%", fontsize=8, ha="left", va="bottom")
+        fig.text(0.02, 0.030, f"{LOW_TUMOR_PURITY} diploid-like tumor (ploidy-inferred tumor purity (scWGS) < 20%)", fontsize=9, ha="left", va="bottom")
 
     fig.tight_layout()
 
@@ -1176,6 +1207,7 @@ def plot_heatmap(
     out_path = os.path.join(outdir, f"heatmap_{safe_name}{filename_suffix}.{fmt}")
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
+    pivot_mean.to_csv(out_path + '.tsv', sep='\t', index=True)
     print(f"  → {out_path}")
 
 
@@ -1267,11 +1299,24 @@ def build_swarm_grid_data(data: pd.DataFrame, purity_map: dict) -> pd.DataFrame:
     heatmaps.
     """
     all_datasets = data["dataset"].unique()
-    keep_datasets = [d for d in all_datasets if should_include_dataset_for_swarm_grid(d)]
+    keep_datasets = [d for d in all_datasets if should_include_dataset_for_swarm_grid(d, purity_map)]
     dropped_datasets = sorted(set(all_datasets) - set(keep_datasets))
     if dropped_datasets:
-        print(f"[swarm-grid] Excluding {len(dropped_datasets)} dataset(s) per the "
-              f"wellDR-seq chip1-only rule: {dropped_datasets}")
+        # Split dropped datasets by reason, so the log makes it clear which
+        # were dropped for missing the chip1 rule vs. the scWGS-purity rule.
+        missing_chip1 = [d for d in dropped_datasets
+                         if technology_from_dataset(d) == "wellDR-seq"
+                         and WELLDR_SEQ_CHIP1_SUBSTRING not in str(d)]
+        low_purity = [d for d in dropped_datasets if d not in set(missing_chip1)]
+        reasons = []
+        if missing_chip1:
+            reasons.append(f"wellDR-seq chip1-only rule (n={len(missing_chip1)}): {missing_chip1}")
+        if low_purity:
+            reasons.append(
+                f"wellDR-seq scWGS-purity < {WELLDR_SEQ_MIN_SCWGS_PURITY:.0%} "
+                f"(n={len(low_purity)}): {low_purity}"
+            )
+        print(f"[swarm-grid] Excluding {len(dropped_datasets)} dataset(s): " + "; ".join(reasons))
     data = data[data["dataset"].isin(keep_datasets)].copy()
 
     excluded_methods_present = sorted(set(data["method"].unique()) & SWARM_GRID_EXCLUDED_METHODS)
@@ -1735,4 +1780,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
