@@ -1,7 +1,7 @@
 '''
 This file has been revised by LLMs and AI agents, using prompts described here:
 <MAJOR_REVISION_STEPS>
-Using as template: github.com/colomemaria/benchmark_scrnaseq_cnv_callers/blob/0569943/snakemake_pipeline/workflow.sm
+Using as template: github.com/colomemaria/benchmark_scrnaseq_cnv_callers/blob/0569943/make_pipeline/workflow.sm
   private link (claude mirror that does not support sharing to the public): https://sorryios.ai/chat/c7dbd9a3-f332-4ca8-a0c1-1614602bdbaf
 Applied manual changes, making copykat run successfully (ignoring other caller for now)
 Revised by claude:
@@ -883,7 +883,7 @@ rule format_ginkgo_ground_truth:
     run:
         shell(f'cp {input.segcopy_hg19} {output.ground_truth_hg19}')
         shell(f'cp {input.segcopy_grch38} {output.ground_truth}')
-        #        for gdir in /nfs/wxz/zxf/cnv/copy-num-bench-scwgs-to-scrna/results/*_ginkgo/truth_calls/ ; do echo python3 /nfs/wxz/zxf/cnv/copy-num-bench-scwgs-to-scrna/snakemake_pipeline/scripts/separate_tumor_normal_from_ginkgo_segcopy.py $gdir/SegCopy $gdir/dna_cell_annotation.txt threshold_diploid_percent 85 ; done | parallel -j 32
+        #        for gdir in /nfs/wxz/zxf/cnv/copy-num-bench-scwgs-to-scrna/results/*_ginkgo/truth_calls/ ; do echo python3 /nfs/wxz/zxf/cnv/copy-num-bench-scwgs-to-scrna/make_pipeline/scripts/separate_tumor_normal_from_ginkgo_segcopy.py $gdir/SegCopy $gdir/dna_cell_annotation.txt threshold_diploid_percent 85 ; done | parallel -j 32
         shell(f'python {workflow.basedir}/scripts/separate_tumor_normal_from_ginkgo_segcopy.py {input.segcopy_hg19} {output.ground_truth_tn_classification} threshold_diploid_percent 85')
 
 rule format_ginkgo_ground_truth_percell:
@@ -1225,6 +1225,7 @@ if 1:
 
     rule evaluate_infercna_hg19_without_given_refs:
         input:
+            eval_script = f"{workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py",
             ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated_hg19.csv",
             infercna_cnv = f"results/{mat_specific_dataset}_output/infercna_hg19_unknown_ref/infercna_cna.tsv",
             gene_pos = GENE_POS_FILE_HG19,
@@ -1271,6 +1272,7 @@ if 1:
     
     rule evaluate_infercna_without_given_refs:
         input:
+            eval_script = f"{workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py",
             ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
             infercna_cnv = f"results/{mat_specific_dataset}_output/infercna_unknown_ref/infercna_cna.tsv",
             gene_pos = GENE_POS_FILE,
@@ -1322,6 +1324,7 @@ if always_has_ref_cells:
     
     rule evaluate_infercna_hg19_with_given_refs:
         input:
+            eval_script = f"{workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py",
             ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated_hg19.csv",
             infercna_cnv = f"results/{mat_specific_dataset}_output/infercna_hg19_known_ref/infercna_cna.tsv",
             gene_pos = GENE_POS_FILE_HG19,
@@ -1370,6 +1373,7 @@ if always_has_ref_cells:
 
     rule evaluate_infercna_with_given_refs:
         input:
+            eval_script = f"{workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py",
             ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
             infercna_cnv = f"results/{mat_specific_dataset}_output/infercna_known_ref/infercna_cna.tsv",
             gene_pos = GENE_POS_FILE,
@@ -1433,6 +1437,7 @@ if always_has_ref_cells:
 
     rule evaluate_infercnv_hg19_with_given_ref:
         input:
+            eval_script = f"{workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py",
             ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated_hg19.csv",
             # infercnv_cnv = f"results/{mat_specific_dataset}_output/infercnv_known_ref_hg19/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt",
             infercnv_expr = f"results/{mat_specific_dataset}_output/infercnv_known_ref_hg19/infercnv.observations.txt",
@@ -1484,6 +1489,7 @@ if always_has_ref_cells:
 
     rule evaluate_infercnv_with_given_refs:
         input:
+            eval_script = f"{workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py",
             ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
             # infercnv_cnv = f"results/{mat_specific_dataset}_output/infercnv_known_ref/infercnv.20_HMM_predHMMi6.leiden.hmm_mode-subclusters.Pnorm_0.5.repr_intensities.observations.txt",
             infercnv_expr = f"results/{mat_specific_dataset}_output/infercnv_known_ref/infercnv.observations.txt",
@@ -1539,6 +1545,7 @@ if 1:
 
     rule evaluate_copykat_cellline_without_given_refs:
         input:
+            eval_script = f"{workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py",
             ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
             copykat = f"results/{mat_specific_dataset}_output/copykat_cellline_unknown_ref/{DATASET}_copykat_CNA_raw_results_gene_by_cell.txt",
             gene_pos = GENE_POS_FILE,
@@ -1591,6 +1598,7 @@ if 1:
 
     rule evaluate_copykat_without_given_refs:
         input:
+            eval_script = f"{workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py",
             ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
             copykat = f"results/{mat_specific_dataset}_output/copykat_unknown_ref/{DATASET}_copykat_CNA_raw_results_gene_by_cell.txt",
             gene_pos = GENE_POS_FILE,
@@ -1647,6 +1655,7 @@ if always_has_ref_cells:
 
     rule evaluate_copykat_with_given_refs:
         input:
+            eval_script = f"{workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py",
             ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
             copykat = f"results/{mat_specific_dataset}_output/copykat_known_ref/{DATASET}_copykat_CNA_raw_results_gene_by_cell.txt",
             gene_pos = GENE_POS_FILE,
@@ -1705,6 +1714,7 @@ if 1:
 
     rule evaluate_scevan_without_given_refs:
         input:
+            eval_script = f"{workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py",
             ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
             scevan_seg = f"results/{mat_specific_dataset}_output/scevan_unknown_ref/output/{DATASET}_subclone1_CN.seg",
             scevan_pred = f"results/{mat_specific_dataset}_output/scevan_unknown_ref/output/{DATASET}_scevan_prediction.txt",
@@ -1765,6 +1775,7 @@ if always_has_ref_cells:
 
     rule evaluate_scevan_with_given_refs:
         input:
+            eval_script = f"{workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py",
             ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
             scevan_seg = f"results/{mat_specific_dataset}_output/scevan_known_ref/output/{DATASET}_subclone1_CN.seg",
             scevan_pred = f"results/{mat_specific_dataset}_output/scevan_known_ref/output/{DATASET}_scevan_prediction.txt",
@@ -1849,6 +1860,7 @@ if 1:
 
     rule evaluate_CONICSmat_without_given_refs:
         input:
+            eval_script = f"{workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py",
             ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
             cnv_types = f"results/{mat_specific_dataset}_output/CONICSmat_unknown_ref/cnv_types.tsv",
             chrom_pos = CHROM_ARM_POS,
@@ -1910,6 +1922,7 @@ if always_has_ref_cells:
 
     rule evaluate_CONICSmat_with_given_refs:
         input:
+            eval_script = f"{workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py",
             ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
             cnv_types = f"results/{mat_specific_dataset}_output/CONICSmat_known_ref/cnv_types.tsv",
             chrom_pos = CHROM_ARM_POS,
@@ -2043,6 +2056,7 @@ if (MODE == "fastq" or MODE == "bam") and always_has_ref_cells:
 
     rule evaluate_casper_with_given_refs:
         input:
+            eval_script = f"{workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py",
             ground_truth      = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
             casper_cellmatrix = f"results/{mat_specific_dataset}_output/casper_known_ref/{DATASET}_casper_cell_matrix.tsv",
             gene_pos          = GENE_POS_FILE,
@@ -2155,6 +2169,7 @@ if MODE == "fastq" or MODE == "bam":
 
     rule evaluate_numbat_without_given_refs:
         input:
+            eval_script = f"{workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py",
             ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
             numbat_expr  = f"results/{mat_specific_dataset}_output/numbat_unknown_ref/gexp_roll_wide.tsv.gz",
             gene_pos     = GENE_POS_FILE,
@@ -2209,6 +2224,7 @@ if (MODE == "fastq" or MODE == "bam") and always_has_ref_cells:
 
     rule evaluate_numbat_with_given_refs:
         input:
+            eval_script = f"{workflow.basedir}/scripts/evaluate_caller_vs_ginkgo.py",
             ground_truth = f"data/{DATASET}_ginkgo_groundtruth/wgs_results_formated.csv",
             numbat_expr  = f"results/{mat_specific_dataset}_output/numbat_known_ref/gexp_roll_wide.tsv.gz",
             gene_pos     = GENE_POS_FILE,

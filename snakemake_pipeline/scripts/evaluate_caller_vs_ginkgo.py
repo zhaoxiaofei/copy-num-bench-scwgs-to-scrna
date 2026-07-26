@@ -14,6 +14,9 @@
   available (euploid-reference / two-pass normalization, after
   Song et al. 2025, Brief. Bioinform. 26(2):bbaf076, and
   Schmid et al. 2025, Nat. Commun. 16:8777).
+- Added optional per-cell read-count labels to both CNV clustermaps. Read counts
+  are loaded from a headered or headerless TSV/CSV/whitespace table and matched
+  to cells using the same cellpath2id normalization as the benchmark.
 </REVISION_HISTORY>
 '''
 
@@ -81,6 +84,7 @@ import gzip
 
 import numpy as np
 import sklearn
+import sklearn.metrics  # explicit: modern sklearn no longer auto-loads .metrics on `import sklearn`
 
 import weightedstats
 import wcorr
@@ -104,10 +108,21 @@ except ImportError:
     pd = None
 
 try:
+    import matplotlib
+    matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     from matplotlib.patches import Patch
+    from matplotlib.colors import ListedColormap, BoundaryNorm, TwoSlopeNorm
 except ImportError:
     plt = None
+    ListedColormap = None
+    BoundaryNorm = None
+    TwoSlopeNorm = None
+
+try:
+    import seaborn as sns
+except ImportError:
+    sns = None
 
 
 def parse_args():
@@ -135,6 +150,80 @@ def parse_args():
                    help="Path to DNA sample annotation TSV (NO HEADER): DNA-inferred_sample_name\\ttumor|reference")
     p.add_argument("--rna-annotation", required=True,
                    help="Path to RNA sample annotation TSV (NO HEADER): RNA-inferred_sample_name\\ttumor|reference")
+
+    # ── Performance / subsampling options ──────────────────────────────────
+    p.add_argument("--max-cells", type=int, default=200,
+                   help="Maximum number of matched cells to load and evaluate. "
+                        "Default: 200. Set to 0 to evaluate all cells.")
+    p.add_argument("--subsample-seed", type=int, default=1,
+                   help="Random seed for deterministic cell subsampling. Default: 1.")
+    p.add_argument("--no-stratified-subsample", action="store_true",
+                   help="Sample cells without preserving tumor/reference proportions.")
+    p.add_argument("--skip-boxplot", action="store_true",
+                   help="Skip the summary boxplot to save time.")
+    p.add_argument("--skip-clustermap", action="store_true",
+                   help="Skip both CNV clustermaps to save time.")
+
+    # ── CNV clustermap options (NEW) ──────────────────────────────────────
+    # Produces two dendrogram-like heatmaps side by side: one for the scWGS
+    # Ginkgo-derived truth set, one for the scRNA-seq caller output. Plotting
+    # style mirrors cnv_clustermap.py (discrete integer-CN colormap for absolute
+    # copy number, continuous diverging colormap for log-ratio / discrete
+    # callers). Skipped silently when seaborn or pandas is not installed.
+    p.add_argument("--clustermap-prefix", default=None,
+                   help="Prefix for the two CNV clustermap outputs. Defaults to "
+                        "<output stem>.clustermap; truth and caller plots are "
+                        "written as <prefix>.truth.{pdf,png} and "
+                        "<prefix>.caller.{pdf,png}.")
+    p.add_argument("--fai", default=None,
+                   help="Chromosome sizes file (.fai / chrom.sizes). OPTIONAL: "
+                        "when not given, chromosome sizes are inferred from "
+                        "the furthest observed genomic position per chromosome "
+                        "across the truth + caller interval lists, which is "
+                        "enough to lay out fixed-size bins covering the data.")
+    p.add_argument("--clustermap-bin-size", type=int, default=5_000_000,
+                   help="Bin size in bp for the clustermaps. Default 5 Mb "
+                        "(5000000) -> sub-chromosomal resolution. Set to 0 to "
+                        "fall back to per-chromosome means (one column per "
+                        "chromosome, no sub-chrom info). When >0 and --fai is "
+                        "not given, chromosome sizes are inferred from the data.")
+    p.add_argument("--clustermap-cmap", default='RdBu_r',
+                   help="Base colormap for the clustermaps.")
+    p.add_argument("--clustermap-truth-vmin", type=int, default=0,
+                   help="Min CN for the truth clustermap colorbar.")
+    p.add_argument("--clustermap-truth-vmax", type=int, default=6,
+                   help="Max CN for the truth clustermap colorbar.")
+    p.add_argument("--clustermap-truth-center", type=int, default=2,
+                   help="Diploid CN for the truth clustermap (used to fill NaN).")
+    p.add_argument("--clustermap-caller-vmin", type=float, default=None,
+                   help="Min value for the caller clustermap colorbar (continuous "
+                        "mode only). Defaults to the 1st percentile of the data.")
+    p.add_argument("--clustermap-caller-vmax", type=float, default=None,
+                   help="Max value for the caller clustermap colorbar (continuous "
+                        "mode only). Defaults to the 99th percentile of the data.")
+    p.add_argument("--clustermap-show-sample-labels", type=int, default=1,
+                   help="Print cell names on the y-axis of the clustermaps.")
+    p.add_argument(
+        "--cell-read-counts", "--clustermap-read-counts",
+        dest="cell_read_counts", default=None,
+        help="Optional TSV/CSV/whitespace table containing one cell name and "
+             "one read count per row. When supplied, clustermap y-axis labels "
+             "are formatted as '<cell> | reads=<count>'. Headered and "
+             "headerless files, including .gz files, are supported.")
+    p.add_argument(
+        "--read-count-cell-column", default=None,
+        help="Cell-name column in --cell-read-counts, specified as a header "
+             "name or zero-based column index. Default: auto-detect common "
+             "cell/barcode column names, otherwise column 0.")
+    p.add_argument(
+        "--read-count-value-column", default=None,
+        help="Read-count column in --cell-read-counts, specified as a header "
+             "name or zero-based column index. Default: auto-detect common "
+             "read-count column names, otherwise column 1.")
+    p.add_argument(
+        "--clustermap-read-label-format", default="{cell} | reads={reads:,}",
+        help="Python format string for clustermap cell labels. Available fields: "
+             "{cell} and integer {reads}. Default: '{cell} | reads={reads:,}'.")
     return p.parse_args()
 
 # NEW: Load sample annotation (2-column TSV: cell name -> tumor/reference)
@@ -178,6 +267,187 @@ def safe_float(x):
         return None
 
 
+_CELL_COLUMN_ALIASES = {
+    "cell", "cellid", "cell_id", "cellname", "cell_name", "sample",
+    "sampleid", "sample_id", "barcode", "cellbarcode", "cell_barcode", "cb",
+}
+_READ_COUNT_COLUMN_ALIASES = {
+    "reads", "read", "nreads", "n_reads", "readcount", "read_count",
+    "numreads", "num_reads", "numberofreads", "number_of_reads",
+    "totalreads", "total_reads", "rawreads", "raw_reads",
+}
+
+
+def _normalise_header_name(value):
+    return str(value).strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _parse_column_spec(spec, header, fallback_index, aliases, column_kind):
+    """Resolve a column name or zero-based integer string to an index."""
+    if spec is not None:
+        spec_text = str(spec).strip()
+        try:
+            index = int(spec_text)
+        except ValueError:
+            if header is None:
+                raise ValueError(
+                    f"--{column_kind}={spec!r} is a column name, but the read-count "
+                    "table was detected as headerless. Use a zero-based index instead.")
+            normalised = [_normalise_header_name(x) for x in header]
+            target = _normalise_header_name(spec_text)
+            if target not in normalised:
+                raise ValueError(
+                    f"Column {spec!r} was not found in the read-count header: {header}")
+            return normalised.index(target)
+        if index < 0:
+            raise ValueError(f"Column index must be non-negative: {spec!r}")
+        return index
+
+    if header is not None:
+        normalised = [_normalise_header_name(x) for x in header]
+        for index, name in enumerate(normalised):
+            if name in aliases:
+                return index
+    return fallback_index
+
+
+def _parse_read_count(value):
+    """Parse integer-like read counts, accepting commas and scientific notation."""
+    text = str(value).strip().strip('"').strip("'").replace(",", "")
+    if not text:
+        return None
+    try:
+        number = float(text)
+    except ValueError:
+        return None
+    if not math.isfinite(number) or number < 0:
+        return None
+    return int(round(number))
+
+
+def _split_read_count_line(line, delimiter):
+    if delimiter is None:
+        return line.split()
+    return next(csv.reader([line], delimiter=delimiter))
+
+
+def load_cell_read_counts(path, cell_column=None, value_column=None):
+    """Load ``{normalised_cell_id: integer_read_count}`` from a small table.
+
+    The table may be tab-, comma-, semicolon-, or whitespace-delimited and may
+    have a header. Column names or zero-based indices can be provided explicitly.
+    In auto mode, common names such as ``cell``, ``barcode``, ``reads``,
+    ``n_reads``, and ``read_count`` are recognised. Headerless input defaults to
+    the first two columns. Duplicate normalised cell IDs are warned about and the
+    last row is retained.
+    """
+    with _open_text(path) as handle:
+        lines = [line.strip() for line in handle
+                 if line.strip() and not line.lstrip().startswith("#")]
+
+    if not lines:
+        raise ValueError(f"Read-count table is empty: {path}")
+
+    first = lines[0]
+    if "\t" in first:
+        delimiter = "\t"
+    elif "," in first:
+        delimiter = ","
+    elif ";" in first:
+        delimiter = ";"
+    else:
+        delimiter = None
+
+    rows = [_split_read_count_line(line, delimiter) for line in lines]
+    if not rows or len(rows[0]) < 2:
+        raise ValueError(
+            f"Read-count table must contain at least two columns: {path}")
+
+    first_normalised = [_normalise_header_name(x) for x in rows[0]]
+    explicit_named_column = any(
+        spec is not None and not str(spec).strip().lstrip("+").isdigit()
+        for spec in (cell_column, value_column)
+    )
+    explicit_index_column = any(
+        spec is not None and str(spec).strip().lstrip("+").isdigit()
+        for spec in (cell_column, value_column)
+    )
+    recognised_header = (
+        any(name in _CELL_COLUMN_ALIASES for name in first_normalised)
+        or any(name in _READ_COUNT_COLUMN_ALIASES for name in first_normalised)
+    )
+
+    # A nonnumeric second field is also a useful header signal for conventional
+    # two-column files. Explicit named columns necessarily require a header.
+    second_field_is_numeric = _parse_read_count(rows[0][1]) is not None
+    has_header = (
+        explicit_named_column
+        or recognised_header
+        or (not explicit_index_column and not second_field_is_numeric)
+    )
+    header = rows[0] if has_header else None
+    data_rows = rows[1:] if has_header else rows
+
+    cell_index = _parse_column_spec(
+        cell_column, header, 0, _CELL_COLUMN_ALIASES, "read-count-cell-column")
+    value_index = _parse_column_spec(
+        value_column, header, 1, _READ_COUNT_COLUMN_ALIASES,
+        "read-count-value-column")
+    max_index = max(cell_index, value_index)
+
+    counts = {}
+    malformed = 0
+    duplicates = 0
+    for row_number, row in enumerate(data_rows, start=(2 if has_header else 1)):
+        if len(row) <= max_index:
+            malformed += 1
+            logging.warning(
+                "Skipping read-count row %d with %d fields; column %d is required.",
+                row_number, len(row), max_index)
+            continue
+        raw_cell = str(row[cell_index]).strip().strip('"').strip("'")
+        count = _parse_read_count(row[value_index])
+        if not raw_cell or count is None:
+            malformed += 1
+            logging.warning(
+                "Skipping invalid read-count row %d: cell=%r count=%r",
+                row_number, raw_cell, row[value_index])
+            continue
+        cell_id = cellpath2id(raw_cell)
+        if cell_id in counts:
+            duplicates += 1
+            logging.warning(
+                "Duplicate read-count cell ID %r at row %d; replacing %d with %d.",
+                cell_id, row_number, counts[cell_id], count)
+        counts[cell_id] = count
+
+    if not counts:
+        raise ValueError(f"No valid per-cell read counts were loaded from {path}")
+
+    logging.info(
+        "Loaded read counts for %d cells from %s (header=%s, cell column=%d, "
+        "read-count column=%d, malformed=%d, duplicates=%d).",
+        len(counts), path, has_header, cell_index, value_index,
+        malformed, duplicates)
+    return counts
+
+
+def format_clustermap_cell_label(cell_name, read_counts, label_format):
+    """Return a display-only cell label with a formatted read count."""
+    cell_text = str(cell_name)
+    if not read_counts:
+        return cell_text
+    count = read_counts.get(cellpath2id(cell_text))
+    if count is None:
+        return f"{cell_text} | reads=NA"
+    try:
+        return label_format.format(cell=cell_text, reads=count)
+    except (KeyError, ValueError, IndexError) as exc:
+        raise ValueError(
+            "Invalid --clustermap-read-label-format. Only {cell} and {reads} "
+            f"are available: {label_format!r}") from exc
+
+
 def normalise_chrom(chrom):
     chrom = str(chrom).strip()
     if chrom.lower().startswith("chr"):
@@ -191,7 +461,52 @@ def interval_overlap(a_start, a_end, b_start, b_end):
     return max(0, e - s)
 
 
-def load_ground_truth_wide(path):
+def select_named_cells(names, max_cells=0, seed=1, annotation_dict=None,
+                       allowed_ids=None):
+    """Select a deterministic, optionally stratified subset of named cells.
+
+    Returns ``(source_indices, selected_names)``. Cell IDs are normalized with
+    ``cellpath2id``. When ``allowed_ids`` is provided, unmatched cells are
+    discarded before sampling. Stratification uses annotation labels such as
+    tumor/reference and approximately preserves their proportions.
+    """
+    candidates = []
+    for idx, name in enumerate(names):
+        cell_id = cellpath2id(name)
+        if allowed_ids is not None and cell_id not in allowed_ids:
+            continue
+        label = (annotation_dict or {}).get(cell_id, "all")
+        candidates.append((idx, name, label))
+
+    if max_cells is None or max_cells <= 0 or len(candidates) <= max_cells:
+        return [x[0] for x in candidates], [x[1] for x in candidates]
+
+    rng = np.random.default_rng(seed)
+    groups = defaultdict(list)
+    for item in candidates:
+        groups[item[2]].append(item)
+    for group in groups.values():
+        rng.shuffle(group)
+
+    # Proportional fair selection. Each nonempty stratum is visited early, while
+    # larger strata receive proportionally more of the final sample.
+    taken = {label: 0 for label in groups}
+    selected = []
+    while len(selected) < max_cells:
+        available = [label for label, group in groups.items()
+                     if taken[label] < len(group)]
+        if not available:
+            break
+        label = min(available, key=lambda x: taken[x] / len(groups[x]))
+        selected.append(groups[label][taken[label]])
+        taken[label] += 1
+
+    # Preserve the original column order after random selection.
+    selected.sort(key=lambda x: x[0])
+    return [x[0] for x in selected], [x[1] for x in selected]
+
+
+def load_ground_truth_wide(path, max_cells=0, seed=1, annotation_dict=None):
     """
     Load wide Ginkgo-style ground truth TSV.
 
@@ -208,7 +523,14 @@ def load_ground_truth_wide(path):
         if len(header) < 4:
             raise ValueError("Ground truth header has too few columns.")
 
-        cell_names = header[3:]
+        all_cell_names = header[3:]
+        selected_indices, cell_names = select_named_cells(
+            all_cell_names, max_cells=max_cells, seed=seed,
+            annotation_dict=annotation_dict)
+
+        logging.info(
+            "Ground-truth subsampling selected %d of %d cells (seed=%d).",
+            len(cell_names), len(all_cell_names), seed)
 
         for row in reader:
             if len(row) < 4:
@@ -232,10 +554,10 @@ def load_ground_truth_wide(path):
                 continue
 
             values = row[3:]
-            for i, cell in enumerate(cell_names):
-                if i >= len(values):
+            for source_i, cell in zip(selected_indices, cell_names):
+                if source_i >= len(values):
                     continue
-                cn = safe_float(values[i])
+                cn = safe_float(values[source_i])
                 if cn is None:
                     continue
                 gt_by_cell[cell].append((chrom, start, end, cn))
@@ -360,7 +682,8 @@ def detect_caller_format(path, caller_name):
     return "generic_matrix"
 
 
-def load_matrix_like_caller(path, caller_format, gene_positions, gt_cell_names, scevan_count_mtx_annot_rdata_path=None):
+def load_matrix_like_caller(path, caller_format, gene_positions, gt_cell_names,
+                            scevan_count_mtx_annot_rdata_path=None):
     """
     Load matrix-like caller outputs into per-cell genomic features.
 
@@ -370,6 +693,7 @@ def load_matrix_like_caller(path, caller_format, gene_positions, gt_cell_names, 
         caller_cell_names: list[str]
     """
     caller_by_cell = defaultdict(list)
+    selected_gt_ids = {cellpath2id(name) for name in gt_cell_names}
 
     # --- New Branch for SCEVAN RData (does not use text file reader) ---
     if caller_format == "scevan_rdata":
@@ -397,7 +721,12 @@ def load_matrix_like_caller(path, caller_format, gene_positions, gt_cell_names, 
 
         assert len(annot_mtx) == len(cna_mtx), f'The matrices from {path} and {scevan_count_mtx_annot_rdata_path} do not have the same number of rows!'
 
-        caller_cell_names = cna_mtx.columns.tolist()
+        all_caller_cell_names = cna_mtx.columns.tolist()
+        _selected_indices, caller_cell_names = select_named_cells(
+            all_caller_cell_names, allowed_ids=selected_gt_ids)
+        cna_mtx = cna_mtx.loc[:, caller_cell_names]
+        logging.info("Loading %d of %d SCEVAN cell columns.",
+                     len(caller_cell_names), len(all_caller_cell_names))
         covered_intervals = defaultdict(list)
 
         # Iterate through genes (rows)
@@ -436,7 +765,11 @@ def load_matrix_like_caller(path, caller_format, gene_positions, gt_cell_names, 
             if len(header) <= meta_cols:
                 raise ValueError("copykat-like header does not contain cell columns.")
 
-            caller_cell_names = header[meta_cols:]
+            all_caller_cell_names = header[meta_cols:]
+            selected_indices, caller_cell_names = select_named_cells(
+                all_caller_cell_names, allowed_ids=selected_gt_ids)
+            logging.info("Loading %d of %d copyKAT cell columns.",
+                         len(caller_cell_names), len(all_caller_cell_names))
 
             covered_intervals = defaultdict(list)
 
@@ -454,10 +787,10 @@ def load_matrix_like_caller(path, caller_format, gene_positions, gt_cell_names, 
                 covered_intervals[chrom].append((start, end))
 
                 vals = row[meta_cols:]
-                for i, cell in enumerate(caller_cell_names):
-                    if i >= len(vals):
+                for source_i, cell in zip(selected_indices, caller_cell_names):
+                    if source_i >= len(vals):
                         continue
-                    v = safe_float(vals[i])
+                    v = safe_float(vals[source_i])
                     if v is None:
                         continue
                     caller_by_cell[cell].append((chrom, start, end, v))
@@ -469,7 +802,11 @@ def load_matrix_like_caller(path, caller_format, gene_positions, gt_cell_names, 
             # Header: first column is empty/header, followed by cell names
             if len(header) < 2:
                 raise ValueError("infercna matrix has too few columns.")
-            caller_cell_names = header[1:]
+            all_caller_cell_names = header[1:]
+            selected_indices, caller_cell_names = select_named_cells(
+                all_caller_cell_names, allowed_ids=selected_gt_ids)
+            logging.info("Loading %d of %d inferCNA cell columns.",
+                         len(caller_cell_names), len(all_caller_cell_names))
             covered_intervals = defaultdict(list)
             for row in reader:
                 if len(row) < 2:
@@ -480,10 +817,10 @@ def load_matrix_like_caller(path, caller_format, gene_positions, gt_cell_names, 
                 chrom, start, end = gene_positions[feature]
                 covered_intervals[chrom].append((start, end))
                 vals = row[1:]
-                for i, cell in enumerate(caller_cell_names):
-                    if i >= len(vals):
+                for source_i, cell in zip(selected_indices, caller_cell_names):
+                    if source_i >= len(vals):
                         continue
-                    v = safe_float(vals[i])
+                    v = safe_float(vals[source_i])
                     if v is None:
                         continue
                     caller_by_cell[cell].append((chrom, start, end, v))
@@ -495,7 +832,11 @@ def load_matrix_like_caller(path, caller_format, gene_positions, gt_cell_names, 
             if len(header) < 2:
                 raise ValueError("Matrix-like caller result has too few columns.")
 
-            caller_cell_names = header[1:]
+            all_caller_cell_names = header[1:]
+            selected_indices, caller_cell_names = select_named_cells(
+                all_caller_cell_names, allowed_ids=selected_gt_ids)
+            logging.info("Loading %d of %d matrix cell columns.",
+                         len(caller_cell_names), len(all_caller_cell_names))
             covered_intervals = defaultdict(list)
 
             for row in reader:
@@ -511,10 +852,10 @@ def load_matrix_like_caller(path, caller_format, gene_positions, gt_cell_names, 
                 covered_intervals[chrom].append((start, end))
 
                 vals = row[1:]
-                for i, cell in enumerate(caller_cell_names):
-                    if i >= len(vals):
+                for source_i, cell in zip(selected_indices, caller_cell_names):
+                    if source_i >= len(vals):
                         continue
-                    v = safe_float(vals[i])
+                    v = safe_float(vals[source_i])
                     if v is None:
                         continue
                     caller_by_cell[cell].append((chrom, start, end, v))
@@ -551,20 +892,24 @@ def load_matrix_like_caller(path, caller_format, gene_positions, gt_cell_names, 
             # row has len(header)+1 fields: [gene, val_1, ..., val_N].
             if len(header) < 1:
                 raise ValueError("CaSpER cell_matrix has empty header.")
-            caller_cell_names = header                      # all of header = cells
-            n_cells = len(caller_cell_names)
+            all_caller_cell_names = header                  # all of header = cells
+            selected_indices, caller_cell_names = select_named_cells(
+                all_caller_cell_names, allowed_ids=selected_gt_ids)
+            n_cells_all = len(all_caller_cell_names)
+            logging.info("Loading %d of %d CaSpER cell columns.",
+                         len(caller_cell_names), n_cells_all)
             covered_intervals = defaultdict(list)
             for row in reader:
-                if len(row) < n_cells + 1:
+                if len(row) < n_cells_all + 1:
                     continue
                 feature = row[0]
                 if feature not in gene_positions:
                     continue
                 chrom, start, end = gene_positions[feature]
                 covered_intervals[chrom].append((start, end))
-                vals = row[1:n_cells + 1]
-                for i, cell in enumerate(caller_cell_names):
-                    v = safe_float(vals[i])
+                vals = row[1:n_cells_all + 1]
+                for source_i, cell in zip(selected_indices, caller_cell_names):
+                    v = safe_float(vals[source_i])
                     if v is None:
                         continue
                     caller_by_cell[cell].append((chrom, start, end, v))
@@ -578,14 +923,22 @@ def load_matrix_like_caller(path, caller_format, gene_positions, gt_cell_names, 
             if len(header) < 2:
                 raise ValueError("Numbat gexp_roll_wide has too few columns.")
             gene_names = header[1:]
-            # Pre-resolve gene -> coords once
+            # Pre-resolve gene -> coords once. Coverage is cell-independent, so
+            # record every gene interval once rather than once per cell.
             gene_coords = [gene_positions.get(g) for g in gene_names]
             caller_cell_names = []
             covered_intervals = defaultdict(list)
+            for coords in gene_coords:
+                if coords is not None:
+                    chrom, start, end = coords
+                    covered_intervals[chrom].append((start, end))
+
             for row in reader:
                 if len(row) < 2:
                     continue
                 cell = row[0]
+                if cellpath2id(cell) not in selected_gt_ids:
+                    continue
                 caller_cell_names.append(cell)
                 vals = row[1:]
                 for g_idx, coords in enumerate(gene_coords):
@@ -596,9 +949,8 @@ def load_matrix_like_caller(path, caller_format, gene_positions, gt_cell_names, 
                         continue
                     chrom, start, end = coords
                     caller_by_cell[cell].append((chrom, start, end, v))
-                    covered_intervals[chrom].append((start, end))
-            # covered_intervals will accumulate duplicates; that's fine,
-            # compute_exome_fraction merges them anyway.
+            logging.info("Loaded %d selected Numbat cell rows.",
+                         len(caller_cell_names))
             return dict(caller_by_cell), covered_intervals, caller_cell_names
 
         elif caller_format == "conicsmat":
@@ -620,10 +972,16 @@ def load_matrix_like_caller(path, caller_format, gene_positions, gt_cell_names, 
                         "neutral": 0.0, "none": 0.0, "": 0.0}
             caller_cell_names = []
             covered_intervals = defaultdict(list)
+            for arm in arm_keys:
+                if arm in arm2pos:
+                    chrom, start, end = arm2pos[arm]
+                    covered_intervals[chrom].append((start, end))
             for row in reader:
                 if len(row) < 2:
                     continue
                 cell = _norm_cell(row[0])
+                if cellpath2id(cell) not in selected_gt_ids:
+                    continue
                 caller_cell_names.append(cell)
                 vals = row[1:]
                 for i, arm in enumerate(arm_keys):
@@ -639,7 +997,6 @@ def load_matrix_like_caller(path, caller_format, gene_positions, gt_cell_names, 
                         continue
                     chrom, start, end = arm2pos[arm]
                     caller_by_cell[cell].append((chrom, start, end, v))
-                    covered_intervals[chrom].append((start, end))
             return dict(caller_by_cell), covered_intervals, caller_cell_names
 
         elif caller_format in ("casper?", "conicsmat?"):
@@ -1040,43 +1397,67 @@ def build_overlap_pairs(gt_intervals, pred_intervals):
 
     return pairs
 
-# Debugged with prompts at https://sorryios.ai/chat/9af3a6ff-4e2e-4700-9b64-6c5058f6fe53
-def build_overlap_intervals(gt_intervals, pred_intervals):
-    """
-    Pair GT and prediction values through interval overlap.
-    Returns:
-        list of (chrom, start, end, gt_cn, pred_cn) where each entry
-        is a sub-interval from the intersection of a GT interval and
-        a single prediction interval.
-    """
-    gt_by_chrom = defaultdict(list)
-    pred_by_chrom = defaultdict(list)
-    for chrom, start, end, cn in gt_intervals:
-        gt_by_chrom[chrom].append((start, end, cn))
-    for chrom, start, end, val in pred_intervals:
-        pred_by_chrom[chrom].append((start, end, val))
-    for chrom in gt_by_chrom:
-        gt_by_chrom[chrom].sort()
-    for chrom in pred_by_chrom:
-        pred_by_chrom[chrom].sort()
-    ret = []
+# Fast interval indexing and overlap collection. The original implementation
+# rebuilt chromosome dictionaries, re-sorted all intervals, and materialized
+# five-element overlap tuples separately for every cell.
+def index_intervals_by_chrom(intervals):
+    indexed = defaultdict(list)
+    for chrom, start, end, value in intervals:
+        indexed[chrom].append((start, end, value))
+    for values in indexed.values():
+        values.sort(key=lambda x: (x[0], x[1]))
+    return dict(indexed)
+
+
+def collect_overlap_arrays(gt_by_chrom, pred_by_chrom):
+    """Return overlap lengths, GT values and prediction values as NumPy arrays."""
+    weights = []
+    gt_values = []
+    pred_values = []
+
     for chrom, gt_list in gt_by_chrom.items():
-        preds = pred_by_chrom.get(chrom, [])
+        preds = pred_by_chrom.get(chrom)
         if not preds:
             continue
+
         j = 0
         for gstart, gend, gcn in gt_list:
             while j < len(preds) and preds[j][1] <= gstart:
                 j += 1
+
             k = j
             while k < len(preds) and preds[k][0] < gend:
                 pstart, pend, pval = preds[k]
-                ov_start = max(gstart, pstart)
-                ov_end = min(gend, pend)
-                if ov_start < ov_end:
-                    ret.append((chrom, ov_start, ov_end, gcn, pval))
+                overlap = min(gend, pend) - max(gstart, pstart)
+                if overlap > 0:
+                    weights.append(overlap)
+                    gt_values.append(gcn)
+                    pred_values.append(pval)
                 k += 1
-    return ret
+
+    return (np.asarray(weights, dtype=np.float64),
+            np.asarray(gt_values, dtype=np.float64),
+            np.asarray(pred_values, dtype=np.float64))
+
+
+def weighted_pearson_numpy(x, y, weights):
+    """Fast weighted Pearson correlation using NumPy vector operations."""
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    weights = np.asarray(weights, dtype=np.float64)
+    total_weight = weights.sum()
+    if x.size < 2 or total_weight <= 0:
+        return float("nan")
+
+    mean_x = np.dot(weights, x) / total_weight
+    mean_y = np.dot(weights, y) / total_weight
+    dx = x - mean_x
+    dy = y - mean_y
+    covariance = np.dot(weights, dx * dy)
+    variance_x = np.dot(weights, dx * dx)
+    variance_y = np.dot(weights, dy * dy)
+    denominator = math.sqrt(variance_x * variance_y)
+    return covariance / denominator if denominator > 0 else float("nan")
 
 
 def compute_reference_baseline(cell_pairs, caller_by_cell, ref_annot_dict, caller_format):
@@ -1111,7 +1492,7 @@ def compute_reference_baseline(cell_pairs, caller_by_cell, ref_annot_dict, calle
 
 
 def compute_metrics_for_cell(gt_intervals, pred_intervals, caller_format, exome_fraction,
-                             baseline=None):
+                             baseline=None, gt_index=None, pred_index=None):
     # ---- Pure scWGS (Ginkgo ground-truth) diploid fraction for THIS cell ----
     # Base-pair-weighted fraction of the cell's scWGS genome that Ginkgo calls
     # neutral (integer CN == 2, i.e. euploid / non-aneuploid). Depends ONLY on
@@ -1130,11 +1511,13 @@ def compute_metrics_for_cell(gt_intervals, pred_intervals, caller_format, exome_
             gt_diploid_bp += w
     scwgs_diploid_fraction = (gt_diploid_bp / gt_total_bp) if gt_total_bp > 0 else float("nan")
 
-    # pairs = build_overlap_pairs(gt_intervals, pred_intervals)
-    # list of (chrom, ov_start, ov_end, gcn, pval)
-    intersect_intervals = build_overlap_intervals(gt_intervals, pred_intervals)
-    
-    if not intersect_intervals:
+    if gt_index is None:
+        gt_index = index_intervals_by_chrom(gt_intervals)
+    if pred_index is None:
+        pred_index = index_intervals_by_chrom(pred_intervals)
+    weights, gt_vals, pred_vals = collect_overlap_arrays(gt_index, pred_index)
+
+    if weights.size == 0:
         return {
             "CopyNumber gain precision": float("nan"),
             "CopyNumber gain recall": float("nan"),
@@ -1149,10 +1532,6 @@ def compute_metrics_for_cell(gt_intervals, pred_intervals, caller_format, exome_
             "_scwgs_diploid_fraction": scwgs_diploid_fraction,
             "n_overlap_pairs": 0,
         }
-
-    weights = [(x[2]-x[1]) for x in intersect_intervals]
-    gt_vals = [x[3] for x in intersect_intervals]
-    pred_vals = [x[4] for x in intersect_intervals]
 
     # ---- REVISED NORMALIZATION --------------------------------------------
     # Old (wrong): pred_median = weightedstats.weighted_median(pred_vals, weights=weights)
@@ -1170,9 +1549,10 @@ def compute_metrics_for_cell(gt_intervals, pred_intervals, caller_format, exome_
     delta = neutral_delta_for_format(caller_format)
     # -----------------------------------------------------------------------
 
-    gt_cls = [classify_gt_cn(v) for v in gt_vals]
-    pred_cls = [classify_pred_value(v, caller_format, baseline=baseline, delta=delta)
-                for v in pred_vals]
+    # Encode loss=-1, neutral=0, gain=1 to avoid repeated Python string work.
+    gt_cls = np.where(gt_vals > 2.0, 1, np.where(gt_vals < 2.0, -1, 0))
+    pred_cls = np.where(pred_vals > baseline + delta, 1,
+                        np.where(pred_vals < baseline - delta, -1, 0))
 
     # NOTE: RNA-seq-based callers do not generate integer copy numbers, so the
     # discrete gain/loss/neutral metrics below are inherently threshold-dependent
@@ -1194,30 +1574,31 @@ def compute_metrics_for_cell(gt_intervals, pred_intervals, caller_format, exome_
     # (reference-derived or fixed) baseline; for full fidelity to Schmid et al.,
     # optimize the gain/loss thresholds once globally.
 
-    tp_gain = sum(w for w, g, p in zip(weights, gt_cls, pred_cls) if g == "gain" and p == "gain")
-    fp_gain = sum(w for w, g, p in zip(weights, gt_cls, pred_cls) if g != "gain" and p == "gain")
-    fn_gain = sum(w for w, g, p in zip(weights, gt_cls, pred_cls) if g == "gain" and p != "gain")
+    tp_gain = float(weights[(gt_cls == 1) & (pred_cls == 1)].sum())
+    fp_gain = float(weights[(gt_cls != 1) & (pred_cls == 1)].sum())
+    fn_gain = float(weights[(gt_cls == 1) & (pred_cls != 1)].sum())
 
-    tp_loss = sum(w for w, g, p in zip(weights, gt_cls, pred_cls) if g == "loss" and p == "loss")
-    fp_loss = sum(w for w, g, p in zip(weights, gt_cls, pred_cls) if g != "loss" and p == "loss")
-    fn_loss = sum(w for w, g, p in zip(weights, gt_cls, pred_cls) if g == "loss" and p != "loss")
+    tp_loss = float(weights[(gt_cls == -1) & (pred_cls == -1)].sum())
+    fp_loss = float(weights[(gt_cls != -1) & (pred_cls == -1)].sum())
+    fn_loss = float(weights[(gt_cls == -1) & (pred_cls != -1)].sum())
 
     gain_precision, gain_recall, gain_fscore = compute_prf(tp_gain, fp_gain, fn_gain)
     loss_precision, loss_recall, loss_fscore = compute_prf(tp_loss, fp_loss, fn_loss)
 
-    multiclass_acc = sum(w for w, g, p in zip(weights, gt_cls, pred_cls) if g == p) / sum(weights) if gt_cls else float("nan")
+    total_overlap = float(weights.sum())
+    multiclass_acc = (float(weights[gt_cls == pred_cls].sum()) / total_overlap
+                      if total_overlap > 0 else float("nan"))
 
-    pearson_r = wcorr.WeightedCorr(x=gt_vals, y=pred_vals, w=weights)(method='pearson')
-    spearman_r = wcorr.WeightedCorr(x=gt_vals, y=pred_vals, w=weights)(method='spearman')
+    pearson_r = weighted_pearson_numpy(gt_vals, pred_vals, weights)
+    spearman_r = weighted_pearson_numpy(rankdata(gt_vals), rankdata(pred_vals), weights)
 
     # Threshold-free, baseline-independent gain/loss AUCs (gain-vs-rest /
     # loss-vs-rest, as in Schmid et al. 2025), now guarded against single-class
     # cells so they no longer raise.
-    gt_gain_bools = [(1 if v > 2 else 0) for v in gt_vals]
-    gt_loss_bools = [(1 if v < 2 else 0) for v in gt_vals]
-    pred_arr = np.asarray(pred_vals, dtype=float)
-    gain_weighted_auc = _safe_roc_auc(gt_gain_bools, pred_arr, sample_weight=weights)
-    loss_weighted_auc = _safe_roc_auc(gt_loss_bools, -pred_arr, sample_weight=weights)
+    gt_gain_bools = (gt_vals > 2.0).astype(np.int8)
+    gt_loss_bools = (gt_vals < 2.0).astype(np.int8)
+    gain_weighted_auc = _safe_roc_auc(gt_gain_bools, pred_vals, sample_weight=weights)
+    loss_weighted_auc = _safe_roc_auc(gt_loss_bools, -pred_vals, sample_weight=weights)
     # gain_weighted_f1s = sklearn.metrics.f1_score(gt_gain_bools, 0 + np.array(pred_vals), sample_weight=weights)
     # loss_weighted_f1s = sklearn.metrics.f1_score(gt_loss_bools, 0 - np.array(pred_vals), sample_weight=weights)
 
@@ -1237,7 +1618,7 @@ def compute_metrics_for_cell(gt_intervals, pred_intervals, caller_format, exome_
         "CopyNumber loss ROC-AUC": loss_weighted_auc,
         "Fraction of the exome with inferred copy numbers": exome_fraction,
         "_scwgs_diploid_fraction": scwgs_diploid_fraction,
-        "n_overlap_pairs": sum(weights), # len(pairs), # number of base-pairs in the evaluated genome intervals
+        "n_overlap_pairs": int(weights.sum()),  # number of evaluated base pairs
     }
 
 # MODIFIED: Split boxplot into Tumor vs Normal/Reference
@@ -1408,6 +1789,364 @@ def _old_make_boxplot(long_rows, caller_name, out_png):
     fig.savefig(out_png, dpi=200)
     plt.close(fig)
 
+# ============================================================================
+# CNV clustermap helpers (adapted from cnv_clustermap.py)
+# ============================================================================
+# Plot two dendrogram-like CNV heatmaps side by side: one for the scWGS-based
+# Ginkgo-derived truth set, one for the scRNA-seq-based caller output. Rows are
+# hierarchically clustered, columns are kept in genomic order; integer copy
+# numbers use a discrete ListedColormap + BoundaryNorm, while log-ratio /
+# discrete -1/0/1 signals use a continuous diverging colormap (TwoSlopeNorm)
+# centred at the diploid baseline. Both plots share the SAME binning scheme so
+# the X axes line up.
+# ============================================================================
+
+CHROM_ORDER = [f'chr{i}' for i in list(range(1, 23)) + ['X', 'Y']]
+
+
+def chrom_sort_key(chrom):
+    """Sort chr1..chr22, chrX, chrY; unknown chroms go last."""
+    c = str(chrom).replace('chr', '')
+    if c == 'X':
+        return 23
+    if c == 'Y':
+        return 24
+    try:
+        return int(c)
+    except Exception:
+        return 99
+
+
+def parse_chrom_sizes(fai_path):
+    """Parse a .fai / chrom.sizes file into {chrom: length}."""
+    sizes = {}
+    with open(fai_path) as fh:
+        for line in fh:
+            toks = line.rstrip('\n').split('\t')
+            if len(toks) >= 2:
+                try:
+                    sizes[toks[0]] = int(toks[1])
+                except ValueError:
+                    pass
+    return sizes
+
+
+def infer_chrom_sizes_from_intervals(*cell_intervals_dicts):
+    """Infer chromosome sizes from per-cell interval lists.
+
+    Takes one or more dicts of {cell_name: [(chrom, start, end, val), ...]} and
+    returns {chrom: max_end} across all intervals in all dicts. Used to enable
+    fixed-bin clustermaps without a --fai file: the inferred sizes are the
+    furthest observed genomic position per chromosome, which is enough to lay
+    out fixed-size bins covering the data.
+    """
+    sizes = {}
+    for cell_intervals in cell_intervals_dicts:
+        if not cell_intervals:
+            continue
+        for cell_name, intervals in cell_intervals.items():
+            for chrom, start, end, _val in intervals:
+                # end is exclusive in BED-like convention; treat it as the size.
+                if chrom not in sizes or end > sizes[chrom]:
+                    sizes[chrom] = end
+    return sizes
+
+
+def _fixed_bin_layout(bin_size, chrom_sizes):
+    labels = []
+    chrom_layout = {}
+    offset = 0
+    for chrom in sorted(chrom_sizes, key=chrom_sort_key):
+        chrom_len = int(chrom_sizes[chrom])
+        n_bins = max(1, (chrom_len + bin_size - 1) // bin_size)
+        chrom_layout[chrom] = (offset, n_bins, chrom_len)
+        for bin_idx in range(n_bins):
+            start = bin_idx * bin_size
+            end = min(start + bin_size, chrom_len)
+            labels.append(f'{chrom}:{start}-{end}')
+        offset += n_bins
+    return labels, chrom_layout
+
+
+def build_clustermap_matrix(cell_intervals, bin_size=0, chrom_sizes=None):
+    """Build a cells x bins DataFrame without per-bin pandas filtering.
+
+    The previous version built one DataFrame per cell and repeatedly filtered it
+    for every chromosome and every fixed bin. This version allocates one NumPy
+    row per cell and accumulates interval overlaps directly.
+    """
+    if pd is None:
+        raise ImportError("pandas is required for clustermap plotting.")
+    if not cell_intervals:
+        return pd.DataFrame()
+
+    cell_names = [name for name, intervals in cell_intervals.items() if intervals]
+    if not cell_names:
+        return pd.DataFrame()
+
+    if bin_size == 0:
+        labels = list(CHROM_ORDER)
+        col_index = {chrom: i for i, chrom in enumerate(labels)}
+        matrix = np.full((len(cell_names), len(labels)), np.nan, dtype=np.float32)
+
+        for row_idx, cell_name in enumerate(cell_names):
+            weighted_sum = np.zeros(len(labels), dtype=np.float64)
+            total_weight = np.zeros(len(labels), dtype=np.float64)
+            for chrom, start, end, value in cell_intervals[cell_name]:
+                col = col_index.get(chrom)
+                if col is None:
+                    continue
+                weight = max(1, end - start)
+                weighted_sum[col] += weight * value
+                total_weight[col] += weight
+            valid = total_weight > 0
+            matrix[row_idx, valid] = (weighted_sum[valid] / total_weight[valid]).astype(np.float32)
+
+        return pd.DataFrame(matrix, index=cell_names, columns=labels)
+
+    if chrom_sizes is None:
+        raise ValueError("Fixed-bin clustermap requires chrom_sizes (from --fai).")
+
+    labels, chrom_layout = _fixed_bin_layout(bin_size, chrom_sizes)
+    matrix = np.full((len(cell_names), len(labels)), np.nan, dtype=np.float32)
+
+    for row_idx, cell_name in enumerate(cell_names):
+        weighted_sum = np.zeros(len(labels), dtype=np.float64)
+        covered_bp = np.zeros(len(labels), dtype=np.float64)
+
+        for chrom, start, end, value in cell_intervals[cell_name]:
+            layout = chrom_layout.get(chrom)
+            if layout is None or end <= start:
+                continue
+            offset, n_bins, chrom_len = layout
+            clipped_start = max(0, min(int(start), chrom_len))
+            clipped_end = max(0, min(int(end), chrom_len))
+            if clipped_end <= clipped_start:
+                continue
+
+            first_bin = clipped_start // bin_size
+            last_bin = min(n_bins - 1, (clipped_end - 1) // bin_size)
+            for bin_idx in range(first_bin, last_bin + 1):
+                bin_start = bin_idx * bin_size
+                bin_end = min(bin_start + bin_size, chrom_len)
+                overlap = min(clipped_end, bin_end) - max(clipped_start, bin_start)
+                if overlap <= 0:
+                    continue
+                col = offset + bin_idx
+                weighted_sum[col] += overlap * value
+                covered_bp[col] += overlap
+
+        valid = covered_bp > 0
+        matrix[row_idx, valid] = (weighted_sum[valid] / covered_bp[valid]).astype(np.float32)
+
+    return pd.DataFrame(matrix, index=cell_names, columns=labels)
+
+
+def _linkage_max_depth(linkage):
+    """Compute linkage-tree depth iteratively, avoiding recursive traversal."""
+    n_leaves = linkage.shape[0] + 1
+    depths = np.zeros(2 * n_leaves - 1, dtype=np.int32)
+    for merge_idx, row in enumerate(linkage):
+        left = int(row[0])
+        right = int(row[1])
+        depths[n_leaves + merge_idx] = max(depths[left], depths[right]) + 1
+    return int(depths[-1])
+
+
+def make_cnv_clustermap(mat, output_prefix, title='', discrete=True,
+                        vmin=0, vmax=6, center=2, cmap='RdBu_r',
+                        show_sample_labels=True, read_counts=None,
+                        read_label_format="{cell} | reads={reads:,}"):
+    """Plot a clustered CNV heatmap (dendrogram-like) from a cells x bins matrix.
+
+    Adapted from cnv_clustermap.py:
+      * rows hierarchically clustered (method='average', metric='euclidean');
+      * columns kept in genomic order;
+      * integer copy numbers shown with a discrete ListedColormap + BoundaryNorm
+        (discrete=True), or continuous log-ratio values shown with a TwoSlopeNorm
+        centred at `center` (discrete=False);
+      * dashed vertical lines mark chromosome boundaries; chromosome names are
+        drawn once, centred under each block;
+      * horizontal colorbar above the heatmap;
+      * dendrogram_ratio=(0.15, 0.055).
+
+    Args:
+        mat: pandas.DataFrame, rows = cells, columns = bins (labels like
+             'chr1:0-1000000' for fixed-bin mode, or 'chr1' for per-chrom mode).
+        output_prefix: write <prefix>.pdf and <prefix>.png.
+        title: optional figure suptitle.
+        discrete: True = integer CN colormap; False = continuous diverging.
+        vmin, vmax, center: copy-number range and diploid centre.
+        cmap: base colormap name.
+        show_sample_labels: y-axis cell labels.
+        read_counts: optional mapping keyed by normalised cell ID. When supplied,
+                     each y-axis label includes the cell's read count.
+        read_label_format: Python format string using {cell} and {reads}.
+    """
+    if plt is None or sns is None or pd is None:
+        sys.stderr.write("WARNING: matplotlib/seaborn/pandas not installed; "
+                         "skipping clustermap.\n")
+        return
+    if mat is None or mat.empty:
+        sys.stderr.write(f"WARNING: empty matrix for clustermap {output_prefix}; "
+                         "skipping.\n")
+        return
+
+    # Replace +/-inf with NaN, then round (discrete mode) / clip (both modes).
+    mat_plot = mat.replace([np.inf, -np.inf], np.nan)
+    if discrete:
+        mat_plot = mat_plot.round().clip(lower=vmin, upper=vmax)
+    else:
+        mat_plot = mat_plot.clip(lower=vmin, upper=vmax)
+    mat_plot = mat_plot.dropna(axis=1, how='all')
+    if mat_plot.shape[1] == 0:
+        sys.stderr.write(f"WARNING: no columns with data for clustermap "
+                         f"{output_prefix}; skipping.\n")
+        return
+    mat_plot = mat_plot.fillna(center)
+
+    # Read counts change display labels only; matrix values, linkage calculation,
+    # subsampling, and cell matching are unaffected. Both truth and caller matrices
+    # are keyed by cellpath2id, so one RNA read-count table labels both plots.
+    if read_counts:
+        original_index = [str(cell) for cell in mat_plot.index]
+        matched_read_counts = sum(
+            cellpath2id(cell) in read_counts for cell in original_index)
+        mat_plot = mat_plot.copy()
+        mat_plot.index = [
+            format_clustermap_cell_label(cell, read_counts, read_label_format)
+            for cell in original_index
+        ]
+        sys.stderr.write(
+            f"INFO: added read counts to {matched_read_counts}/{len(original_index)} "
+            "clustermap cell labels; unmatched cells are labelled reads=NA.\n")
+
+    if mat_plot.shape[0] < 2:
+        sys.stderr.write(f"WARNING: fewer than 2 cells for clustermap "
+                         f"{output_prefix}; skipping (clustering needs >=2 rows).\n")
+        return
+
+    if discrete:
+        n_levels = int(vmax - vmin + 1)
+        base = plt.get_cmap(cmap, n_levels)
+        discrete_cmap = ListedColormap([base(i) for i in range(n_levels)])
+        norm = BoundaryNorm(np.arange(vmin - 0.5, vmax + 1.5, 1.0),
+                            discrete_cmap.N)
+        cbar_kws = {
+            'label':  'Copy number',
+            'ticks':  np.arange(int(vmin), int(vmax) + 1),
+            'spacing': 'proportional',
+            'orientation': 'horizontal',
+        }
+        cmap_kwargs = {'cmap': discrete_cmap, 'norm': norm}
+    else:
+        norm = TwoSlopeNorm(vcenter=center, vmin=vmin, vmax=vmax)
+        cbar_kws = {
+            'label':  'CNV signal',
+            'orientation': 'horizontal',
+        }
+        cmap_kwargs = {'cmap': cmap, 'norm': norm}
+
+    figsize = (max(8, min(0.09 * mat_plot.shape[1] + 6, 12)),
+               max(8, min(0.18 * mat_plot.shape[0] + 3, 12)))
+
+    import fastcluster
+    from scipy.cluster.hierarchy import leaves_list
+
+    row_linkage = fastcluster.linkage(
+        mat_plot.to_numpy(dtype=np.float64, copy=False),
+        method="average",
+        metric="euclidean",
+    )
+
+    tree_depth = _linkage_max_depth(row_linkage)
+    recursion_limit = sys.getrecursionlimit()
+    draw_row_dendrogram = tree_depth < max(50, recursion_limit - 100)
+    plot_linkage = row_linkage
+
+    sys.stderr.write(
+        f"INFO: clustermap matrix={mat_plot.shape[0]} cells x "
+        f"{mat_plot.shape[1]} bins; linkage depth={tree_depth}.\n")
+
+    if not draw_row_dendrogram:
+        # Preserve clustered row order but do not ask SciPy's recursive
+        # dendrogram renderer to traverse a pathologically deep tree.
+        mat_plot = mat_plot.iloc[leaves_list(row_linkage)]
+        plot_linkage = None
+        sys.stderr.write(
+            "WARNING: linkage tree is too deep for the recursive dendrogram "
+            "renderer; plotting clustered rows without the row dendrogram.\n")
+
+    clustermap_kwargs = dict(
+        data=mat_plot,
+        row_linkage=plot_linkage,
+        row_cluster=draw_row_dendrogram,
+        col_cluster=False,
+        figsize=figsize,
+        cbar_kws=cbar_kws,
+        xticklabels=False,
+        yticklabels=show_sample_labels,
+        dendrogram_ratio=(0.15, 0.055),
+        **cmap_kwargs,
+    )
+
+    try:
+        g = sns.clustermap(**clustermap_kwargs)
+    except RecursionError:
+        # A final defensive fallback for SciPy/Seaborn version-specific behavior.
+        plt.close('all')
+        sys.stderr.write(
+            "WARNING: dendrogram rendering exceeded the recursion limit; "
+            "retrying without the row dendrogram.\n")
+        mat_plot = mat_plot.iloc[leaves_list(row_linkage)]
+        clustermap_kwargs.update(
+            data=mat_plot, row_linkage=None, row_cluster=False)
+        g = sns.clustermap(**clustermap_kwargs)
+
+    # Horizontal colorbar above the heatmap.
+    g.ax_cbar.set_position([0.25, 0.98, 0.5, 0.01])
+    g.ax_cbar.tick_params(axis='x', length=3)
+
+    ax = g.ax_heatmap
+    ax.set_xlabel('')
+    ax.set_ylabel('')
+
+    # Chromosome dividers + centred chromosome labels (no per-bin x labels).
+    col_chroms = [str(c).split(':')[0] for c in mat_plot.columns]
+    prev = None
+    for i, c in enumerate(col_chroms):
+        if prev is not None and c != prev:
+            ax.axvline(i, color='black', linestyle='--', linewidth=0.8)
+        prev = c
+    pos = {}
+    for i, c in enumerate(col_chroms):
+        pos.setdefault(c, []).append(i)
+    centers, labels = [], []
+    for c in CHROM_ORDER:
+        if c in pos:
+            centers.append((pos[c][0] + pos[c][-1] + 1) / 2.0)
+            labels.append(c.replace('chr', ''))
+    if centers:
+        ax.set_xticks(centers)
+        ax.set_xticklabels(labels, rotation=15, fontsize=8)
+    ax.tick_params(axis='x', length=0)
+
+    if show_sample_labels:
+        plt.setp(ax.get_yticklabels(), rotation=0, fontsize=6)
+
+    if title:
+        g.fig.suptitle(title, y=1.02)
+
+    out_dir = os.path.dirname(os.path.abspath(output_prefix))
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    #g.savefig(output_prefix + '.pdf', bbox_inches='tight')
+    g.savefig(output_prefix + '.png', dpi=150, bbox_inches='tight')
+    plt.close('all')
+    sys.stderr.write(f'Wrote {output_prefix}.png\n')
+    #sys.stderr.write(f'Wrote {output_prefix}.pdf and {output_prefix}.png\n')
+
+
 def cellpath2id(c):
     multidots = len(c.split('.')) > 2
     if '..' in c: sep = '..'
@@ -1430,9 +2169,17 @@ def cellnames_to_id2name(cell_names):
 def main():
     args = parse_args()
 
-    logging.info('Started loading ground truth')
-    gt_by_cell, gt_cell_names = load_ground_truth_wide(args.ground_truth)
-    # NEW: Load sample annotation
+    read_counts = None
+    if args.cell_read_counts:
+        logging.info("Started loading per-cell read counts for clustermap labels")
+        read_counts = load_cell_read_counts(
+            args.cell_read_counts,
+            cell_column=args.read_count_cell_column,
+            value_column=args.read_count_value_column,
+        )
+
+    # Load annotations first so ground-truth subsampling can preserve the
+    # tumor/reference proportions instead of loading all ~3000 cell columns.
     logging.info('Started loading sample annotation')
     sample_annot     = load_sample_annotation(args.sample_annotation)
     dna_annot        = load_sample_annotation(args.dna_annotation)
@@ -1441,8 +2188,7 @@ def main():
 
     # If the author/config 'sample' annotation is a placeholder (all-unknown, i.e.
     # the config used 'Unknown' for every cell), defer to the DNA (Ginkgo) labeling
-    # as the effective sample labeling: the 'celltype' column, the classification
-    # benchmarks, and the reference-derived baseline then all use DNA truth.
+    # as the effective sample labeling.
     SAMPLE_IS_UNKNOWN = annotation_is_all_unknown(sample_annot)
     if SAMPLE_IS_UNKNOWN:
         logging.info(
@@ -1452,9 +2198,16 @@ def main():
 
     # Keyed by normalised cell ID
     sample_annot_dict = build_annot_dict(sample_annot)
-    dna_annot_dict    = build_annot_dict(dna_annot)    # matched against gt_cell (DNA space)
-    rna_refset_annot_dict = build_annot_dict(rna_refset_annot)    # matched against pred_cell (RNA space)
+    dna_annot_dict    = build_annot_dict(dna_annot)
+    rna_refset_annot_dict = build_annot_dict(rna_refset_annot)
     rna_real_annot_dict   = build_annot_dict(rna_real_annot)
+
+    logging.info('Started loading and subsampling ground truth')
+    sampling_annotation = (None if args.no_stratified_subsample
+                           else sample_annot_dict)
+    gt_by_cell, gt_cell_names = load_ground_truth_wide(
+        args.ground_truth, max_cells=args.max_cells,
+        seed=args.subsample_seed, annotation_dict=sampling_annotation)
 
     logging.info('Started loading gene positions')
     gene_positions, total_exome_bp = load_gene_positions(args.gene_pos)
@@ -1481,24 +2234,9 @@ def main():
     logging.info('Started computing exome fraction')
     exome_fraction = compute_exome_fraction(covered_intervals_by_chrom, total_exome_bp)
 
-    def multiline_zip(list1, list2):
-        ret = []
-        for e1, e2 in zip(list1, list2):
-            ret.append('  ' + str(e1) + '\n  ' + str(e2))
-        return '\n,\n'.join(ret)
-
-    gt_cell_names_2 = sorted(gt_cell_names)
-    if gt_cell_names != gt_cell_names_2:
-        logging.warning(
-            f'The cmd-line params {args} results in something expected: cells in the truth set was not sorted. '
-            f'{multiline_zip(gt_cell_names, gt_cell_names_2)} is not element-wise matching)')
-        gt_cell_names = gt_cell_names_2
-    caller_cell_names_2 = sorted(caller_cell_names)
-    if caller_cell_names != caller_cell_names_2:
-        logging.warning(
-            f'The cmd-line params {args} results in something expected: '
-            'cells in the call set was not sorted, so perform sorting. ')
-        caller_cell_names = caller_cell_names_2
+    logging.info(
+        "Loaded %d sampled ground-truth cells, %d caller cells, %d common IDs.",
+        len(gt_cell_names), len(caller_cell_names), len(common_cells))
 
     # Match cells by order, as requested by the user.
     if caller_format in ("copykat", "infercnv", "generic_matrix", "scevan_rdata", "infercna",
@@ -1514,6 +2252,20 @@ def main():
         # Segment-like fallback
         only_caller_cell = caller_cell_names[0]
         cell_pairs = [(gt_cell_names[0], only_caller_cell)]
+
+    logging.info("Matched %d cells after subsampling.", len(cell_pairs))
+
+    # Build chromosome indexes once. Previously these dictionaries were rebuilt
+    # and re-sorted inside compute_metrics_for_cell for every cell.
+    logging.info("Indexing intervals for fast overlap evaluation")
+    gt_interval_indexes = {
+        gt_cell: index_intervals_by_chrom(gt_by_cell.get(gt_cell, []))
+        for gt_cell, _pred_cell in cell_pairs
+    }
+    pred_interval_indexes = {
+        pred_cell: index_intervals_by_chrom(caller_by_cell.get(pred_cell, []))
+        for _gt_cell, pred_cell in cell_pairs
+    }
 
     # REVISED NORMALIZATION: estimate the diploid baseline ONCE from the
     # reference (diploid) cells and reuse it for every cell, instead of taking
@@ -1579,6 +2331,8 @@ def main():
             caller_format=caller_format,
             exome_fraction=exome_fraction,
             baseline=ref_baseline,   # reference-derived (or None -> fixed per-format)
+            gt_index=gt_interval_indexes.get(gt_cell),
+            pred_index=pred_interval_indexes.get(pred_cell),
         )
         metrics["Fraction of the cells with inferred copy numbers"] = (
             len(common_cells) / float(len(cell_to_gt_name))
@@ -1704,14 +2458,157 @@ def main():
         base, _ = os.path.splitext(args.output)
         plot_path = base + ".boxplot.png"
 
-    make_boxplot(long_rows, args.caller_name, plot_path)
+    if args.skip_boxplot:
+        logging.info("Skipping boxplot (--skip-boxplot).")
+    else:
+        make_boxplot(long_rows, args.caller_name, plot_path)
+
+    # ── NEW: Two CNV clustermaps (truth + caller) ────────────────────────
+    # Adapted from cnv_clustermap.py: rows hierarchically clustered, columns
+    # kept in genomic order; discrete integer-CN colormap for the Ginkgo truth
+    # set (and for absolute-CN callers such as scevan_seg), continuous diverging
+    # colormap (TwoSlopeNorm centred at the diploid baseline) for log-ratio /
+    # discrete callers. Both plots use the SAME binning scheme so the X axes
+    # line up; cells are taken from `cell_pairs` and labelled with cellpath2id
+    # so the y-axis labels match across the two plots.
+    if args.skip_clustermap:
+        logging.info("Skipping CNV clustermaps (--skip-clustermap).")
+    elif sns is None or pd is None or plt is None:
+        sys.stderr.write(
+            "WARNING: seaborn/pandas/matplotlib not installed; skipping CNV "
+            "clustermaps.\n")
+    else:
+        clustermap_prefix = args.clustermap_prefix
+        if clustermap_prefix is None:
+            base, _ = os.path.splitext(args.output)
+            clustermap_prefix = base + ".clustermap"
+
+        chrom_sizes = None
+        bin_size = args.clustermap_bin_size
+        if bin_size > 0:
+            # Fixed-bin mode: resolve chrom sizes from --fai, or infer from data.
+            if args.fai:
+                chrom_sizes = {c: s for c, s in parse_chrom_sizes(args.fai).items()
+                               if c in CHROM_ORDER}
+            else:
+                # Auto-infer from the union of truth + caller intervals so the
+                # script works out-of-the-box without a .fai file. The inferred
+                # size is the furthest observed genomic position per chromosome,
+                # which is sufficient to lay out fixed-size bins covering the data.
+                inferred = infer_chrom_sizes_from_intervals(gt_by_cell, caller_by_cell)
+                chrom_sizes = {c: s for c, s in inferred.items() if c in CHROM_ORDER}
+                if chrom_sizes:
+                    sys.stderr.write(
+                        "INFO: --fai not given; inferred chromosome sizes from "
+                        "the data (max end per chrom across truth + caller "
+                        f"intervals): "
+                        f"{dict(sorted(chrom_sizes.items(), key=lambda kv: chrom_sort_key(kv[0])))}\n")
+            if not chrom_sizes:
+                sys.stderr.write(
+                    "WARNING: could not resolve chromosome sizes for fixed-bin "
+                    "clustermap; falling back to per-chromosome means.\n")
+                bin_size = 0
+        # else: per-chromosome means (no --fai needed)
+
+        # Use the matched cells (cell_pairs), keyed by cellpath2id so the
+        # y-axis labels match across the two plots.
+        gt_cells_for_clustermap = {
+            cellpath2id(gt_cell): gt_by_cell.get(gt_cell, [])
+            for gt_cell, _pred_cell in cell_pairs
+        }
+        caller_cells_for_clustermap = {
+            cellpath2id(pred_cell): caller_by_cell.get(pred_cell, [])
+            for _gt_cell, pred_cell in cell_pairs
+        }
+
+        gt_mat = build_clustermap_matrix(
+            gt_cells_for_clustermap, bin_size=bin_size, chrom_sizes=chrom_sizes)
+        caller_mat = build_clustermap_matrix(
+            caller_cells_for_clustermap, bin_size=bin_size,
+            chrom_sizes=chrom_sizes)
+
+        show_labels = bool(args.clustermap_show_sample_labels)
+
+        # Truth clustermap: always integer discrete colormap (Ginkgo integer CN).
+        truth_out = clustermap_prefix + ".truth"
+        make_cnv_clustermap(
+            gt_mat, truth_out,
+            title=f"CNV clustermap (truth, Ginkgo/scWGS): {args.caller_name}",
+            discrete=True,
+            vmin=args.clustermap_truth_vmin,
+            vmax=args.clustermap_truth_vmax,
+            center=args.clustermap_truth_center,
+            cmap=args.clustermap_cmap,
+            show_sample_labels=show_labels,
+            read_counts=read_counts,
+            read_label_format=args.clustermap_read_label_format,
+        )
+        print(f"Truth clustermap written to: {truth_out}.png")
+
+        # Caller clustermap: integer discrete for absolute-CN formats
+        # (neutral_baseline_for_format == 2.0, e.g. scevan_seg), continuous
+        # diverging for log-ratio / discrete -1/0/1 formats (baseline 0.0).
+        caller_baseline = (ref_baseline if ref_baseline is not None
+                           else neutral_baseline_for_format(caller_format))
+        is_absolute_cn = (neutral_baseline_for_format(caller_format) == 2.0)
+        caller_out = clustermap_prefix + ".caller"
+        if is_absolute_cn:
+            make_cnv_clustermap(
+                caller_mat, caller_out,
+                title=f"CNV clustermap (caller, {args.caller_name})",
+                discrete=True,
+                vmin=args.clustermap_truth_vmin,
+                vmax=args.clustermap_truth_vmax,
+                center=args.clustermap_truth_center,
+                cmap=args.clustermap_cmap,
+                show_sample_labels=show_labels,
+                read_counts=read_counts,
+                read_label_format=args.clustermap_read_label_format,
+            )
+        else:
+            # Auto-derive vmin/vmax from data percentiles if not provided.
+            if caller_mat.empty:
+                caller_vmin = caller_baseline - 1.5
+                caller_vmax = caller_baseline + 1.5
+            else:
+                flat = caller_mat.to_numpy().flatten()
+                flat = flat[~np.isnan(flat)]
+                if flat.size == 0:
+                    caller_vmin = caller_baseline - 1.5
+                    caller_vmax = caller_baseline + 1.5
+                else:
+                    caller_vmin = (args.clustermap_caller_vmin
+                                   if args.clustermap_caller_vmin is not None
+                                   else float(np.nanpercentile(flat, 1)))
+                    caller_vmax = (args.clustermap_caller_vmax
+                                   if args.clustermap_caller_vmax is not None
+                                   else float(np.nanpercentile(flat, 99)))
+            # Guard: ensure vmin < baseline < vmax for TwoSlopeNorm.
+            if caller_vmin >= caller_baseline:
+                caller_vmin = caller_baseline - 1.5
+            if caller_vmax <= caller_baseline:
+                caller_vmax = caller_baseline + 1.5
+            make_cnv_clustermap(
+                caller_mat, caller_out,
+                title=f"CNV clustermap (caller, {args.caller_name})",
+                discrete=False,
+                vmin=caller_vmin,
+                vmax=caller_vmax,
+                center=caller_baseline,
+                cmap=args.clustermap_cmap,
+                show_sample_labels=show_labels,
+                read_counts=read_counts,
+                read_label_format=args.clustermap_read_label_format,
+            )
+        print(f"Caller clustermap written to: {caller_out}.png")
 
     print(f"Evaluation complete for {args.caller_name}")
     print(f"Caller format: {caller_format}")
     print(f"Matched cells by order: {len(cell_pairs)}")
     print(f"Exome coverage fraction: {exome_fraction:.6f}" if not math.isnan(exome_fraction) else "Exome coverage fraction: nan")
     print(f"Metrics written to: {args.output}")
-    print(f"Boxplot written to: {plot_path}")
+    if not args.skip_boxplot:
+        print(f"Boxplot written to: {plot_path}")
     for gt_cell, pred_cell, celltype, n_pairs in summary_rows[:5]:
         print(f"  {gt_cell} <-> {pred_cell} ({celltype}): n_overlap_pairs={n_pairs}")
 
@@ -1719,3 +2616,4 @@ def main():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(pathname)s:%(lineno)d %(levelname)s - %(message)s')
     main()
+

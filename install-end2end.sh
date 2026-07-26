@@ -20,6 +20,7 @@ ${conda} env create -y --name ${envname} sra-tools snakemake bwa samtools bcftoo
     subread ucsc-liftover \
     pyreadr \
     numpy scipy matplotlib seaborn pandas scikit-learn weightedstats \
+    fastcluster \
     $scalop_prereqs $casper_prereqs
 
 ${conda} activate ${envname}
