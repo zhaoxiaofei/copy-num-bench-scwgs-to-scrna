@@ -152,9 +152,9 @@ def parse_args():
                    help="Path to RNA sample annotation TSV (NO HEADER): RNA-inferred_sample_name\\ttumor|reference")
 
     # ── Performance / subsampling options ──────────────────────────────────
-    p.add_argument("--max-cells", type=int, default=200,
+    p.add_argument("--max-cells", type=int, default=100,
                    help="Maximum number of matched cells to load and evaluate. "
-                        "Default: 200. Set to 0 to evaluate all cells.")
+                        "Default: 100. Set to 0 to evaluate all cells.")
     p.add_argument("--subsample-seed", type=int, default=1,
                    help="Random seed for deterministic cell subsampling. Default: 1.")
     p.add_argument("--no-stratified-subsample", action="store_true",
@@ -2616,4 +2616,5 @@ def main():
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(pathname)s:%(lineno)d %(levelname)s - %(message)s')
     main()
+
 

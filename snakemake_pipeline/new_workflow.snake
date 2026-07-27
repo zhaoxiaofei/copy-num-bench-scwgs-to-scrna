@@ -1125,6 +1125,91 @@ RNA_CELL_ANNOTATION = SELECTED_COUNT_MATRIX + '.annotation.txt'
 RNA_BEST_ANNOTATION = f"data/{DATASET}_input/sample_annotation_2.txt"
 DNA_BEST_ANNOTATION = f"data/{DATASET}_input/dna_best_annotation.txt"
 
+# ---------------------------------------------------------------------------
+# Per-cell read-count table consumed by evaluate_caller_vs_ginkgo.py to add
+# "reads=<N>" to clustermap y-axis labels. Populated by
+# rule aggregate_per_cell_read_counts below.
+#
+# In fastq/bam mode the per-cell BAM .stats files (already produced by the
+# alignment rules) are parsed for "SN\traw total sequences:".
+# In matrix mode (no per-cell BAMs) we instead sum the count matrix columns.
+# Either way, the output is a 2-column TSV: cell\treads, which the script's
+# load_cell_read_counts() auto-detects (header "cell\treads").
+# ---------------------------------------------------------------------------
+PER_CELL_READ_COUNTS = f"results/{mat_specific_dataset}_output/evaluation/per_cell_read_counts.tsv"
+
+if MODE == "fastq" or MODE == "bam":
+
+    rule aggregate_per_cell_read_counts:
+        """Aggregate per-cell RNA read counts from samtools .stats files.
+
+        Outputs a 2-column TSV (header: cell\treads) consumed by
+        evaluate_caller_vs_ginkgo.py --cell-read-counts.
+        """
+        input:
+            # Per-cell RNA BAM .stats files produced by rule split_rna_bam_by_cell
+            rna_stats = [f"results/{dataset}_bams/rna/all_cells_grch38_{c}.bam.stats"
+                         for c in OLD_ALL_CELL_IDS],
+        output:
+            tsv = PER_CELL_READ_COUNTS,
+        log:
+            f"logs/{mat_specific_dataset}/{mat_specific_dataset}_aggregate_per_cell_read_counts.log"
+        threads: 1
+        resources:
+            mem_mb = 2000
+        run:
+            import os
+            os.makedirs(os.path.dirname(output.tsv), exist_ok=True)
+            # cellpath2id normalisation done by the consumer; here we write
+            # the original cell IDs so the consumer can match either form.
+            with open(output.tsv, "w") as out:
+                out.write("cell\treads\n")
+                for cid in OLD_ALL_CELL_IDS:
+                    stats_path = f"results/{dataset}_bams/rna/all_cells_grch38_{cid}.bam.stats"
+                    reads = 0
+                    try:
+                        with open(stats_path) as fh:
+                            for line in fh:
+                                if line.startswith("SN\traw total sequences:"):
+                                    reads = int(line.strip().split("\t")[2])
+                                    break
+                    except FileNotFoundError:
+                        # Missing .stats -> skip; the script will report reads=NA
+                        continue
+                    if reads > 0:
+                        out.write(f"{cid}\t{reads}\n")
+            print(f"Wrote per-cell read counts to {output.tsv}")
+
+else:
+
+    rule aggregate_per_cell_read_counts:
+        """In matrix mode there are no per-cell BAMs; compute per-cell total
+        UMI/gene counts directly from the count matrix (sum across genes).
+        Output is a 2-column TSV (header: cell\treads)."""
+        input:
+            count_mat = SELECTED_COUNT_MATRIX,
+        output:
+            tsv = PER_CELL_READ_COUNTS,
+        log:
+            f"logs/{mat_specific_dataset}/{mat_specific_dataset}_aggregate_per_cell_read_counts.log"
+        threads: 1
+        resources:
+            mem_mb = 4000
+        run:
+            import os
+            import pandas as pd
+            os.makedirs(os.path.dirname(output.tsv), exist_ok=True)
+            # SELECTED_COUNT_MATRIX is cell-by-gene (rows = cells) per the
+            # convert_star_solo_to_matrices rule.
+            df = pd.read_csv(input.count_mat, sep="\t", index_col=0)
+            # Sum across genes (columns) per cell (rows).
+            reads = df.sum(axis=1).astype("int64")
+            with open(output.tsv, "w") as out:
+                out.write("cell\treads\n")
+                for cell, n in reads.items():
+                    out.write(f"{cell}\t{n}\n")
+            print(f"Wrote per-cell read counts to {output.tsv}")
+
 rule create_DNA_best_annotation:
     input:
         annot1 = ORI_CELL_ANNOTATION,
@@ -1230,6 +1315,7 @@ if 1:
             infercna_cnv = f"results/{mat_specific_dataset}_output/infercna_hg19_unknown_ref/infercna_cna.tsv",
             gene_pos = GENE_POS_FILE_HG19,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
+            read_counts = PER_CELL_READ_COUNTS,
         output:
             results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercna_hg19_without_preclassified_cells.tsv"
         log:
@@ -1249,6 +1335,7 @@ if 1:
             --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
             --gene-pos {input.gene_pos} \
             --output {output.results} \
+            --cell-read-counts {input.read_counts} \
             2>{log}
             """
 
@@ -1277,6 +1364,7 @@ if 1:
             infercna_cnv = f"results/{mat_specific_dataset}_output/infercna_unknown_ref/infercna_cna.tsv",
             gene_pos = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
+            read_counts = PER_CELL_READ_COUNTS,
         output:
             results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercna_without_preclassified_cells.tsv"
         log:
@@ -1296,6 +1384,7 @@ if 1:
             --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
             --gene-pos {input.gene_pos} \
             --output {output.results} \
+            --cell-read-counts {input.read_counts} \
             2>{log}
             """
 
@@ -1329,6 +1418,7 @@ if always_has_ref_cells:
             infercna_cnv = f"results/{mat_specific_dataset}_output/infercna_hg19_known_ref/infercna_cna.tsv",
             gene_pos = GENE_POS_FILE_HG19,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
+            read_counts = PER_CELL_READ_COUNTS,
         output:
             results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercna_hg19_with_preclassified_cells.tsv"
         log:
@@ -1348,6 +1438,7 @@ if always_has_ref_cells:
             --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
             --gene-pos {input.gene_pos} \
             --output {output.results} \
+            --cell-read-counts {input.read_counts} \
             2>{log}
             """
 
@@ -1378,6 +1469,7 @@ if always_has_ref_cells:
             infercna_cnv = f"results/{mat_specific_dataset}_output/infercna_known_ref/infercna_cna.tsv",
             gene_pos = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
+            read_counts = PER_CELL_READ_COUNTS,
         output:
             results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercna_with_preclassified_cells.tsv"
         log:
@@ -1397,6 +1489,7 @@ if always_has_ref_cells:
             --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
             --gene-pos {input.gene_pos} \
             --output {output.results} \
+            --cell-read-counts {input.read_counts} \
             2>{log}
             """
 
@@ -1443,6 +1536,7 @@ if always_has_ref_cells:
             infercnv_expr = f"results/{mat_specific_dataset}_output/infercnv_known_ref_hg19/infercnv.observations.txt",
             gene_pos = GENE_POS_FILE_HG19,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
+            read_counts = PER_CELL_READ_COUNTS,
         output:
             results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercnv_hg19_with_preclassified_cells.tsv"
         log:
@@ -1462,6 +1556,7 @@ if always_has_ref_cells:
                 --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
                 --gene-pos {input.gene_pos} \
                 --output {output.results} \
+                --cell-read-counts {input.read_counts} \
                 2>{log}
             """
 
@@ -1495,6 +1590,7 @@ if always_has_ref_cells:
             infercnv_expr = f"results/{mat_specific_dataset}_output/infercnv_known_ref/infercnv.observations.txt",
             gene_pos = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
+            read_counts = PER_CELL_READ_COUNTS,
         output:
             results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_infercnv_with_preclassified_cells.tsv"
         log:
@@ -1514,6 +1610,7 @@ if always_has_ref_cells:
                 --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
                 --gene-pos {input.gene_pos} \
                 --output {output.results} \
+                --cell-read-counts {input.read_counts} \
                 2>{log}
             """
 
@@ -1550,6 +1647,7 @@ if 1:
             copykat = f"results/{mat_specific_dataset}_output/copykat_cellline_unknown_ref/{DATASET}_copykat_CNA_raw_results_gene_by_cell.txt",
             gene_pos = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
+            read_counts = PER_CELL_READ_COUNTS,
         output:
             results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_copykat_cellline_without_preclassified_cells.tsv"
         log:
@@ -1572,6 +1670,7 @@ if 1:
                     --gene-pos {input.gene_pos} \
                     --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
                     --output {output.results} \
+                    --cell-read-counts {input.read_counts} \
                     2>{log}
                 """
             )
@@ -1603,6 +1702,7 @@ if 1:
             copykat = f"results/{mat_specific_dataset}_output/copykat_unknown_ref/{DATASET}_copykat_CNA_raw_results_gene_by_cell.txt",
             gene_pos = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
+            read_counts = PER_CELL_READ_COUNTS,
         output:
             results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_copykat_without_preclassified_cells.tsv"
         log:
@@ -1625,6 +1725,7 @@ if 1:
                     --gene-pos {input.gene_pos} \
                     --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
                     --output {output.results} \
+                    --cell-read-counts {input.read_counts} \
                     2>{log}
                 """
             )
@@ -1660,6 +1761,7 @@ if always_has_ref_cells:
             copykat = f"results/{mat_specific_dataset}_output/copykat_known_ref/{DATASET}_copykat_CNA_raw_results_gene_by_cell.txt",
             gene_pos = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
+            read_counts = PER_CELL_READ_COUNTS,
         output:
             results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_copykat_with_preclassified_cells.tsv"
         log:
@@ -1679,6 +1781,7 @@ if always_has_ref_cells:
                 --gene-pos {input.gene_pos} \
                 --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
                 --output {output.results} \
+                --cell-read-counts {input.read_counts} \
                 2>{log}
             """
 
@@ -1722,6 +1825,7 @@ if 1:
             log2file = f"results/{mat_specific_dataset}_output/scevan_unknown_ref/output/{dataset}_CNAmtx.RData",
             annofile = f"results/{mat_specific_dataset}_output/scevan_unknown_ref/output/{dataset}_count_mtx_annot.RData",
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
+            read_counts = PER_CELL_READ_COUNTS,
         output:
             results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_scevan_without_preclassified_cells.tsv"
         log:
@@ -1741,6 +1845,7 @@ if 1:
                 --gene-pos {input.gene_pos} \
                 --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
                 --output {output.results} \
+                --cell-read-counts {input.read_counts} \
                 --scevan_count_mtx_annot_rdata_path {input.annofile} \
                 2>{log}
             """
@@ -1783,6 +1888,7 @@ if always_has_ref_cells:
             log2file = f"results/{mat_specific_dataset}_output/scevan_known_ref/output/{dataset}_CNAmtx.RData",
             annofile = f"results/{mat_specific_dataset}_output/scevan_known_ref/output/{dataset}_count_mtx_annot.RData",
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
+            read_counts = PER_CELL_READ_COUNTS,
         output:
             results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_scevan_with_preclassified_cells.tsv"
         log:
@@ -1802,6 +1908,7 @@ if always_has_ref_cells:
                 --gene-pos {input.gene_pos} \
                 --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
                 --output {output.results} \
+                --cell-read-counts {input.read_counts} \
                 --scevan_count_mtx_annot_rdata_path {input.annofile} \
                 2>{log}
             """
@@ -1866,6 +1973,7 @@ if 1:
             chrom_pos = CHROM_ARM_POS,
             gene_pos = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
+            read_counts = PER_CELL_READ_COUNTS,
         output:
             results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_CONICSmat_without_preclassified_cells.tsv"
         log:
@@ -1886,6 +1994,7 @@ if 1:
                 --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
                 --chrom-arm-pos {input.chrom_pos} \
                 --output {output.results} \
+                --cell-read-counts {input.read_counts} \
                 2>{log}
             """
 
@@ -1928,6 +2037,7 @@ if always_has_ref_cells:
             chrom_pos = CHROM_ARM_POS,
             gene_pos = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
+            read_counts = PER_CELL_READ_COUNTS,
         output:
             results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_CONICSmat_with_preclassified_cells.tsv"
         log:
@@ -1948,6 +2058,7 @@ if always_has_ref_cells:
                 --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
                 --chrom-arm-pos {input.chrom_pos} \
                 --output {output.results} \
+                --cell-read-counts {input.read_counts} \
                 2>{log}
             """
 
@@ -2061,6 +2172,7 @@ if (MODE == "fastq" or MODE == "bam") and always_has_ref_cells:
             casper_cellmatrix = f"results/{mat_specific_dataset}_output/casper_known_ref/{DATASET}_casper_cell_matrix.tsv",
             gene_pos          = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
+            read_counts = PER_CELL_READ_COUNTS,
             chrom_pos         = CHROM_ARM_POS,
         output:
             results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_casper_with_preclassified_cells.tsv"
@@ -2081,6 +2193,7 @@ if (MODE == "fastq" or MODE == "bam") and always_has_ref_cells:
                 --gene-pos {input.gene_pos} \
                 --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
                 --output {output.results} \
+                --cell-read-counts {input.read_counts} \
                 --chrom-arm-pos {input.chrom_pos} \
                 2>{log}
             """
@@ -2174,6 +2287,7 @@ if MODE == "fastq" or MODE == "bam":
             numbat_expr  = f"results/{mat_specific_dataset}_output/numbat_unknown_ref/gexp_roll_wide.tsv.gz",
             gene_pos     = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
+            read_counts = PER_CELL_READ_COUNTS,
         output:
             results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_numbat_without_preclassified_cells.tsv"
         log:
@@ -2193,6 +2307,7 @@ if MODE == "fastq" or MODE == "bam":
                 --gene-pos {input.gene_pos} \
                 --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
                 --output {output.results} \
+                --cell-read-counts {input.read_counts} \
                 2>{log}
             """
 
@@ -2229,6 +2344,7 @@ if (MODE == "fastq" or MODE == "bam") and always_has_ref_cells:
             numbat_expr  = f"results/{mat_specific_dataset}_output/numbat_known_ref/gexp_roll_wide.tsv.gz",
             gene_pos     = GENE_POS_FILE,
             samp_annot = ORI_CELL_ANNOTATION, dna_annot = DNA_CELL_ANNOTATION, rna_annot = RNA_CELL_ANNOTATION,
+            read_counts = PER_CELL_READ_COUNTS,
         output:
             results = f"results/{mat_specific_dataset}_output/evaluation/bench_{mat_specific_dataset}_numbat_with_preclassified_cells.tsv"
         log:
@@ -2248,6 +2364,7 @@ if (MODE == "fastq" or MODE == "bam") and always_has_ref_cells:
                 --gene-pos {input.gene_pos} \
                 --sample-annotation {input.samp_annot} --dna-annotation {input.dna_annot} --rna-annotation {input.rna_annot} \
                 --output {output.results} \
+                --cell-read-counts {input.read_counts} \
                 2>{log}
             """
 
@@ -2302,6 +2419,4 @@ rule compute_dataset_metrics:
         HAS_REF_CELLS  = HAS_REF_CELLS,
     script:
         "scripts/compute_dataset_metrics.py"
-
-
 
