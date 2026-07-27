@@ -221,6 +221,15 @@ def parse_args():
              "name or zero-based column index. Default: auto-detect common "
              "read-count column names, otherwise column 1.")
     p.add_argument(
+        "--read-count-dna-value-column", default=None,
+        help="DNA/scWGS read-count column in --cell-read-counts, specified as a header "
+             "name or zero-based column index. When supplied alongside --cell-read-counts, "
+             "DNA read counts are used for the truth (scWGS) clustermap labels while "
+             "the RNA read counts (from --read-count-value-column) are used for the "
+             "caller (scRNA) clustermap labels. Default: auto-detect common "
+             "DNA/scWGS read-count column names (dna_reads, scwgs_reads, wgs_reads), "
+             "otherwise None (same read counts used for both clustermaps).")
+    p.add_argument(
         "--clustermap-read-label-format", default="{cell} | reads={reads:,}",
         help="Python format string for clustermap cell labels. Available fields: "
              "{cell} and integer {reads}. Default: '{cell} | reads={reads:,}'.")
@@ -275,6 +284,11 @@ _READ_COUNT_COLUMN_ALIASES = {
     "reads", "read", "nreads", "n_reads", "readcount", "read_count",
     "numreads", "num_reads", "numberofreads", "number_of_reads",
     "totalreads", "total_reads", "rawreads", "raw_reads",
+    "rna_reads", "rna_read",
+}
+_DNA_READ_COUNT_COLUMN_ALIASES = {
+    "dna_reads", "dna_read", "scwgs_reads", "scwgs_read",
+    "wgs_reads", "wgs_read",
 }
 
 
@@ -2006,8 +2020,9 @@ def make_cnv_clustermap(mat, output_prefix, title='', discrete=True,
     mat_plot = mat_plot.fillna(center)
 
     # Read counts change display labels only; matrix values, linkage calculation,
-    # subsampling, and cell matching are unaffected. Both truth and caller matrices
-    # are keyed by cellpath2id, so one RNA read-count table labels both plots.
+    # subsampling, and cell matching are unaffected. Each clustermap uses the
+    # appropriate read-count dict: DNA/scWGS counts for the truth clustermap,
+    # RNA/scRNA counts for the caller clustermap.
     if read_counts:
         original_index = [str(cell) for cell in mat_plot.index]
         matched_read_counts = sum(
@@ -2169,14 +2184,49 @@ def cellnames_to_id2name(cell_names):
 def main():
     args = parse_args()
 
-    read_counts = None
+    rna_read_counts = None
+    dna_read_counts = None
     if args.cell_read_counts:
-        logging.info("Started loading per-cell read counts for clustermap labels")
-        read_counts = load_cell_read_counts(
+        logging.info("Started loading per-cell RNA read counts for clustermap labels")
+        rna_read_counts = load_cell_read_counts(
             args.cell_read_counts,
             cell_column=args.read_count_cell_column,
             value_column=args.read_count_value_column,
         )
+        # Also load DNA (scWGS) read counts for the truth clustermap if a
+        # DNA column is specified or can be auto-detected.
+        if args.read_count_dna_value_column is not None:
+            logging.info("Started loading per-cell DNA read counts for truth clustermap labels")
+            dna_read_counts = load_cell_read_counts(
+                args.cell_read_counts,
+                cell_column=args.read_count_cell_column,
+                value_column=args.read_count_dna_value_column,
+            )
+        else:
+            # Auto-detect: try to find a DNA/scWGS column in the same file.
+            # If the file has a recognised DNA column header, load it;
+            # otherwise fall back to using RNA counts for both clustermaps.
+            with _open_text(args.cell_read_counts) as handle:
+                first_lines = [line.strip() for line in handle
+                               if line.strip() and not line.lstrip().startswith("#")]
+            if first_lines and "\t" in first_lines[0]:
+                header_fields = first_lines[0].split("\t")
+                normalised = [_normalise_header_name(x) for x in header_fields]
+                for name in normalised:
+                    if name in _DNA_READ_COUNT_COLUMN_ALIASES:
+                        dna_col = header_fields[normalised.index(name)]
+                        logging.info("Auto-detected DNA read-count column '%s'; "
+                                     "loading DNA counts for truth clustermap", dna_col)
+                        dna_read_counts = load_cell_read_counts(
+                            args.cell_read_counts,
+                            cell_column=args.read_count_cell_column,
+                            value_column=dna_col,
+                        )
+                        break
+            if dna_read_counts is None:
+                logging.info("No DNA read-count column found; using RNA counts for "
+                             "both truth and caller clustermaps")
+                dna_read_counts = rna_read_counts
 
     # Load annotations first so ground-truth subsampling can preserve the
     # tumor/reference proportions instead of loading all ~3000 cell columns.
@@ -2540,7 +2590,7 @@ def main():
             center=args.clustermap_truth_center,
             cmap=args.clustermap_cmap,
             show_sample_labels=show_labels,
-            read_counts=read_counts,
+            read_counts=dna_read_counts,
             read_label_format=args.clustermap_read_label_format,
         )
         print(f"Truth clustermap written to: {truth_out}.png")
@@ -2562,7 +2612,7 @@ def main():
                 center=args.clustermap_truth_center,
                 cmap=args.clustermap_cmap,
                 show_sample_labels=show_labels,
-                read_counts=read_counts,
+                read_counts=rna_read_counts,
                 read_label_format=args.clustermap_read_label_format,
             )
         else:
@@ -2597,7 +2647,7 @@ def main():
                 center=caller_baseline,
                 cmap=args.clustermap_cmap,
                 show_sample_labels=show_labels,
-                read_counts=read_counts,
+                read_counts=rna_read_counts,
                 read_label_format=args.clustermap_read_label_format,
             )
         print(f"Caller clustermap written to: {caller_out}.png")

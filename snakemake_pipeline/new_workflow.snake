@@ -1133,22 +1133,27 @@ DNA_BEST_ANNOTATION = f"data/{DATASET}_input/dna_best_annotation.txt"
 # In fastq/bam mode the per-cell BAM .stats files (already produced by the
 # alignment rules) are parsed for "SN\traw total sequences:".
 # In matrix mode (no per-cell BAMs) we instead sum the count matrix columns.
-# Either way, the output is a 2-column TSV: cell\treads, which the script's
-# load_cell_read_counts() auto-detects (header "cell\treads").
+# Either way, the output is a 3-column TSV: cell\trna_reads\tdna_reads, which the
+# script's load_cell_read_counts() auto-detects (header "cell\trna_reads\tdna_reads").
+# RNA reads are shown on the caller (scRNA) clustermap; DNA reads are shown on
+# the truth (scWGS) clustermap.
 # ---------------------------------------------------------------------------
 PER_CELL_READ_COUNTS = f"results/{mat_specific_dataset}_output/evaluation/per_cell_read_counts.tsv"
 
 if MODE == "fastq" or MODE == "bam":
 
     rule aggregate_per_cell_read_counts:
-        """Aggregate per-cell RNA read counts from samtools .stats files.
+        """Aggregate per-cell RNA and DNA read counts from samtools .stats files.
 
-        Outputs a 2-column TSV (header: cell\treads) consumed by
+        Outputs a 3-column TSV (header: cell\trna_reads\tdna_reads) consumed by
         evaluate_caller_vs_ginkgo.py --cell-read-counts.
         """
         input:
             # Per-cell RNA BAM .stats files produced by rule split_rna_bam_by_cell
             rna_stats = [f"results/{dataset}_bams/rna/all_cells_grch38_{c}.bam.stats"
+                         for c in OLD_ALL_CELL_IDS],
+            # Per-cell DNA (scWGS) BAM .stats files produced by rule align_dna_to_hg19
+            dna_stats = [f"results/{dataset}_bams/dna/{c}_hg19.bam.stats"
                          for c in OLD_ALL_CELL_IDS],
         output:
             tsv = PER_CELL_READ_COUNTS,
@@ -1162,32 +1167,35 @@ if MODE == "fastq" or MODE == "bam":
             os.makedirs(os.path.dirname(output.tsv), exist_ok=True)
             # cellpath2id normalisation done by the consumer; here we write
             # the original cell IDs so the consumer can match either form.
+            def _parse_stats(path):
+                try:
+                    with open(path) as fh:
+                        for line in fh:
+                            if line.startswith("SN\traw total sequences:"):
+                                return int(line.strip().split("\t")[2])
+                except FileNotFoundError:
+                    pass
+                return 0
             with open(output.tsv, "w") as out:
-                out.write("cell\treads\n")
+                out.write("cell\trna_reads\tdna_reads\n")
                 for cid in OLD_ALL_CELL_IDS:
-                    stats_path = f"results/{dataset}_bams/rna/all_cells_grch38_{cid}.bam.stats"
-                    reads = 0
-                    try:
-                        with open(stats_path) as fh:
-                            for line in fh:
-                                if line.startswith("SN\traw total sequences:"):
-                                    reads = int(line.strip().split("\t")[2])
-                                    break
-                    except FileNotFoundError:
-                        # Missing .stats -> skip; the script will report reads=NA
-                        continue
-                    if reads > 0:
-                        out.write(f"{cid}\t{reads}\n")
+                    rna_reads = _parse_stats(f"results/{dataset}_bams/rna/all_cells_grch38_{cid}.bam.stats")
+                    dna_reads = _parse_stats(f"results/{dataset}_bams/dna/{cid}_hg19.bam.stats")
+                    if rna_reads > 0 or dna_reads > 0:
+                        out.write(f"{cid}\t{rna_reads}\t{dna_reads}\n")
             print(f"Wrote per-cell read counts to {output.tsv}")
 
 else:
 
     rule aggregate_per_cell_read_counts:
-        """In matrix mode there are no per-cell BAMs; compute per-cell total
+        """In matrix mode there are no per-cell RNA BAMs; compute per-cell total
         UMI/gene counts directly from the count matrix (sum across genes).
-        Output is a 2-column TSV (header: cell\treads)."""
+        DNA (scWGS) read counts come from the scWGS BAM .stats files.
+        Output is a 3-column TSV (header: cell\trna_reads\tdna_reads)."""
         input:
             count_mat = SELECTED_COUNT_MATRIX,
+            # Per-cell DNA (scWGS) BAM .stats files
+            dna_stats = [ALL_SCWGS_BAM_OF[c] + ".stats" for c in OLD_ALL_CELL_IDS],
         output:
             tsv = PER_CELL_READ_COUNTS,
         log:
@@ -1203,11 +1211,21 @@ else:
             # convert_star_solo_to_matrices rule.
             df = pd.read_csv(input.count_mat, sep="\t", index_col=0)
             # Sum across genes (columns) per cell (rows).
-            reads = df.sum(axis=1).astype("int64")
+            rna_reads = df.sum(axis=1).astype("int64")
+            def _parse_stats(path):
+                try:
+                    with open(path) as fh:
+                        for line in fh:
+                            if line.startswith("SN\traw total sequences:"):
+                                return int(line.strip().split("\t")[2])
+                except FileNotFoundError:
+                    pass
+                return 0
             with open(output.tsv, "w") as out:
-                out.write("cell\treads\n")
-                for cell, n in reads.items():
-                    out.write(f"{cell}\t{n}\n")
+                out.write("cell\trna_reads\tdna_reads\n")
+                for cell, rna_n in rna_reads.items():
+                    dna_n = _parse_stats(ALL_SCWGS_BAM_OF[cell] + ".stats")
+                    out.write(f"{cell}\t{rna_n}\t{dna_n}\n")
             print(f"Wrote per-cell read counts to {output.tsv}")
 
 rule create_DNA_best_annotation:
