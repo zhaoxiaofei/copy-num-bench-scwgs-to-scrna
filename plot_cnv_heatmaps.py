@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
 
-'''
-https://sorryios.ai/chat/c7f1600f-8e4c-4d0e-804f-edbb44344127
-  exclude HG19 performance results
-'''
-
-
 """
 Plot heatmaps of CNV caller benchmarking results, and emit a single per-dataset
 summary table.
@@ -59,6 +53,24 @@ every evaluation directory the glob touches, the sibling files
 <evaluation_dir>/dataset_metrics.tsv and <evaluation_dir>/per_cell_metrics.tsv
 are read. Columns absent from a given file become empty cells; a dataset whose
 dataset_metrics.tsv is missing is skipped with a warning.
+
+Consistent method configuration across all figures
+---------------------------------------------------
+Every figure emitted by this script — the per-metric heatmaps, the tumor-only
+heatmaps, the overview heatmap, AND the metric-by-method swarm grid — evaluates
+EXACTLY the same set of method configurations, so the column count is identical
+across all of them. Two layers of filtering are applied, in this order:
+
+  1. File-level: any evaluation TSV whose basename contains the substring
+     ``_hg19_with`` is dropped (so the hg19-with-preclassified repeats don't
+     contaminate the hg38 figures). This is handled in ``load_all`` /
+     ``load_classification`` via ``_exclude_hg19_with``.
+  2. Method-level: any (caller-derived) method name in
+     ``BENCHMARK_EXCLUDED_METHODS`` is dropped from the unified ``data`` table
+     BEFORE any plotting happens. This single filter is applied once in
+     ``main`` (see ``filter_benchmark_methods``) and replaces the previous
+     swarm-grid-only ``SWARM_GRID_EXCLUDED_METHODS`` filter, which had caused
+     the heatmaps (13 methods) and swarm grid (12 methods) to disagree.
 
 Usage
 -----
@@ -178,7 +190,17 @@ NON_BENCHMARK_BASENAMES = {
 # --input_glob results are consumed (heatmap eval TSVs, classification TSVs,
 # and the dataset_metrics.tsv / per_cell_metrics.tsv inference for the
 # summary table).
-EXCLUDED_FILENAME_SUBSTRING = "_hg19_with"
+#
+# NOTE: this is a literal substring match. We deliberately match
+# ``_hg19_with_preclassified_cells`` (NOT the looser ``_hg19_with``) so that
+# files like ``bench_X_infercna_hg19_without_preclassified_cells.tsv`` — which
+# legitimately contain ``_hg19_with`` as a prefix of ``_hg19_without`` — are
+# NOT accidentally dropped. The previous substring ``_hg19_with`` was a
+# prefix of ``_hg19_without`` and therefore over-matched, silently dropping
+# the hg19-without-preclassified eval TSVs (e.g. infercna_predict_hg19 /
+# infercnv_hg19-from-the-without-rule outputs) along with the hg19-with
+# ones that were actually meant to be excluded.
+EXCLUDED_FILENAME_SUBSTRING = "_hg19_with_preclassified_cells"
 
 
 def _exclude_hg19_with(files):
@@ -328,14 +350,67 @@ TECHNOLOGY_MARKERS = {
 TECHNOLOGY_MARKER_UNKNOWN = "D"   # diamond, for any prefix not in the map above
 TECHNOLOGY_UNKNOWN_LABEL = "Other"
 
-# Method (grid column) names to always exclude from the swarm grid, regardless
-# of whether they're present in the underlying data. Applied when building
-# `col_methods` in `plot_metric_method_swarm_grid`.
-SWARM_GRID_EXCLUDED_METHODS = {
-    "copykat_cellline_autoInferRef",
+# Method (grid column) names to ALWAYS exclude from EVERY figure emitted by
+# this script (per-metric heatmaps, tumor-only heatmaps, overview heatmap,
+# and the metric-by-method swarm grid), regardless of whether they're
+# present in the underlying data. Applied ONCE in `main()` via
+# `filter_benchmark_methods`, immediately after `load_all` and
+# `load_classification` are concatenated, so every downstream consumer
+# (`aggregate`, `plot_heatmap`, `plot_tumor_only_heatmaps`, `plot_overview`,
+# `build_swarm_grid_data`) sees the SAME method set — and therefore the SAME
+# column count — across all figures.
+#
+# Why these three:
+#   * ``copykat_cellline_autoInferRef`` — CopyKat run with the cell-line mode
+#     of reference inference, a redundant variant of ``copykat_autoInferRef``.
+#   * ``infercna_autoInferRef_hg19``   — inferCNA auto-infer-ref run on hg19,
+#     a redundant variant of ``infercna_autoInferRef`` (hg38).
+#   * ``infercna_hg19``               — inferCNA run on hg19 with given refs,
+#     a redundant variant of ``infercna`` (hg38).
+BENCHMARK_EXCLUDED_METHODS = {
+    # "copykat_cellline_autoInferRef", # cell-line mode should be included
     "infercna_autoInferRef_hg19",
     "infercna_hg19",
 }
+
+# Backwards-compatibility alias: any code or downstream consumer that still
+# references the old swarm-grid-only name keeps working. Both names point at
+# the SAME set object.
+SWARM_GRID_EXCLUDED_METHODS = BENCHMARK_EXCLUDED_METHODS
+
+
+def filter_benchmark_methods(data):
+    """Drop rows whose ``method`` is in ``BENCHMARK_EXCLUDED_METHODS``.
+
+    Applied ONCE in ``main()`` to the unified ``data`` table (i.e. the output
+    of ``load_all`` concatenated with ``load_classification``), BEFORE any
+    aggregation or plotting happens. This guarantees that every downstream
+    consumer — ``aggregate``, ``plot_heatmap``, ``plot_tumor_only_heatmaps``,
+    ``plot_overview``, and ``build_swarm_grid_data`` — sees the SAME method
+    set, so the column count is identical across the per-metric heatmaps,
+    the tumor-only heatmaps, the overview heatmap, and the metric-by-method
+    swarm grid.
+
+    Returns a new ``pd.DataFrame``; the input is not mutated. A row-count
+    summary is printed for traceability.
+    """
+    if data is None or data.empty or "method" not in data.columns:
+        return data
+    excluded_present = sorted(set(data["method"].unique()) & BENCHMARK_EXCLUDED_METHODS)
+    if not excluded_present:
+        print(f"[filter-methods] No methods matched BENCHMARK_EXCLUDED_METHODS "
+              f"({sorted(BENCHMARK_EXCLUDED_METHODS)}); nothing to drop.")
+        return data.copy()
+    before = len(data)
+    out = data[~data["method"].isin(BENCHMARK_EXCLUDED_METHODS)].copy()
+    after = len(out)
+    print(f"[filter-methods] Excluding {len(excluded_present)} method column(s) "
+          f"per BENCHMARK_EXCLUDED_METHODS: {excluded_present}")
+    print(f"[filter-methods]   rows: {before} -> {after} (dropped {before - after})")
+    print(f"[filter-methods]   methods now present: "
+          f"{sorted(out['method'].unique())}")
+    return out
+
 
 # Only keep the 'chip1' replicate for wellDR-seq datasets that were split
 # across multiple chips (chip1, chip2, chip3, ...), to avoid one tumor sample
@@ -845,7 +920,7 @@ def write_dataset_summary(input_glob: str, summary_out: str, no_normal_cells_set
     
     # MODIFIED: Write a '{NO_NORMAL_SET}'-suffixed copy to disk, but return the clean summary
     summary_out_df = _suffix_dataset_column(summary, no_normal_cells_set or set())
-    summary_out_df.to_csv(summary_out, sep="\t", index=False, na_rep='N/A')
+    summary_out_df.to_csv(summary_out, sep="\t", index=False, na_rep='NaN')
     
     print(f"Dataset summary ({len(summary)} dataset(s)) → {summary_out}")
     return summary
@@ -1284,7 +1359,7 @@ def plot_tumor_only_heatmaps(
         agg_path = os.path.join(outdir, "aggregated_results_tumor_only.tsv")
         # MODIFIED: Write suffixed copy to TSV
         agg_tumor_out = _suffix_dataset_column(agg_tumor, no_normal_cells_set)
-        agg_tumor_out.to_csv(agg_path, sep="\t", index=False, na_rep='N/A')
+        agg_tumor_out.to_csv(agg_path, sep="\t", index=False, na_rep='NaN')
         print(f"[tumor-only] aggregated data → {agg_path} ({plotted} metric(s))")
 
 
@@ -1306,13 +1381,20 @@ def build_swarm_grid_data(data: pd.DataFrame, purity_map: dict) -> pd.DataFrame:
     names requested here and the actual `metric` values in the eval TSVs does
     not silently drop a row.
 
-    A dataset-level filter (`should_include_dataset_for_swarm_grid`) and a
-    method-level filter (`SWARM_GRID_EXCLUDED_METHODS`) are both applied here,
-    up front, before any tumor-filtering, aggregation, or the >15-method
-    warning check below — so that warning reflects the method count that will
-    actually appear in the figure, not a pre-exclusion count. Both filters are
-    local to the swarm-grid figure and do not affect the original per-metric
-    heatmaps.
+    A dataset-level filter (`should_include_dataset_for_swarm_grid`) is
+    applied here, up front, before any tumor-filtering, aggregation, or the
+    >15-method warning check below — so that warning reflects the method
+    count that will actually appear in the figure, not a pre-exclusion count.
+    The dataset filter is local to the swarm-grid figure and does not affect
+    the original per-metric heatmaps.
+
+    The method-level filter (`BENCHMARK_EXCLUDED_METHODS`, a.k.a.
+    `SWARM_GRID_EXCLUDED_METHODS`) is NOT applied here any more — it is now
+    applied ONCE in `main()` via `filter_benchmark_methods`, so the heatmaps,
+    the overview, AND the swarm grid all see the SAME method set and column
+    count. The block below still asserts that fact and warns loudly if a
+    caller bypassed `filter_benchmark_methods` (e.g. someone feeds a raw
+    `load_all` output straight into this function).
     """
     all_datasets = data["dataset"].unique()
     keep_datasets = [d for d in all_datasets if should_include_dataset_for_swarm_grid(d, purity_map)]
@@ -1335,11 +1417,21 @@ def build_swarm_grid_data(data: pd.DataFrame, purity_map: dict) -> pd.DataFrame:
         print(f"[swarm-grid] Excluding {len(dropped_datasets)} dataset(s): " + "; ".join(reasons))
     data = data[data["dataset"].isin(keep_datasets)].copy()
 
-    excluded_methods_present = sorted(set(data["method"].unique()) & SWARM_GRID_EXCLUDED_METHODS)
+    # Safety net: if `main()` already ran `filter_benchmark_methods` (the
+    # normal path), the following set intersection is empty and nothing is
+    # dropped. If someone calls `build_swarm_grid_data` directly on raw
+    # `load_all` output, we still apply the SAME exclusion so the swarm grid
+    # never ends up with MORE method columns than the (already-filtered)
+    # heatmaps — i.e. the consistent-method-configs guarantee is preserved
+    # even on direct-function-call usage.
+    excluded_methods_present = sorted(set(data["method"].unique()) & BENCHMARK_EXCLUDED_METHODS)
     if excluded_methods_present:
-        print(f"[swarm-grid] Excluding {len(excluded_methods_present)} method column(s) "
-              f"per SWARM_GRID_EXCLUDED_METHODS: {excluded_methods_present}")
-    data = data[~data["method"].isin(SWARM_GRID_EXCLUDED_METHODS)].copy()
+        print(f"[swarm-grid] NOTE: {len(excluded_methods_present)} method column(s) "
+              f"are in BENCHMARK_EXCLUDED_METHODS but were NOT filtered out by "
+              f"`filter_benchmark_methods` (was this function called directly, "
+              f"bypassing `main`?). Filtering them here to preserve the "
+              f"consistent-method-configs guarantee. Methods: {excluded_methods_present}")
+        data = data[~data["method"].isin(BENCHMARK_EXCLUDED_METHODS)].copy()
 
     available_all = set(data["metric"].unique())
     tumor_data = filter_to_tumor(data)
@@ -1427,8 +1519,10 @@ def plot_metric_method_swarm_grid(
         return
 
     # Columns: methods sorted alphabetically for a stable, reproducible layout.
-    # (SWARM_GRID_EXCLUDED_METHODS is already applied upstream, in
-    # build_swarm_grid_data, so long_df here is already filtered.)
+    # (BENCHMARK_EXCLUDED_METHODS is already applied upstream — once in
+    # `main()` via `filter_benchmark_methods`, with a defensive re-check in
+    # `build_swarm_grid_data` — so long_df here is already filtered AND has
+    # the SAME method set as the heatmaps / overview figure.)
     col_methods = sorted(long_df["method"].unique())
     if not col_methods:
         print("[swarm-grid] All methods were excluded; skipping the swarm-grid figure.")
@@ -1737,6 +1831,14 @@ def main():
     if not clf.empty:
         data = pd.concat([data, clf], ignore_index=True)
 
+    # Apply the GLOBAL method exclusion ONCE here so every downstream
+    # consumer — `aggregate` -> `plot_heatmap` / `plot_tumor_only_heatmaps` /
+    # `plot_overview`, AND `build_swarm_grid_data` -> `plot_metric_method_swarm_grid`
+    # — sees the SAME method set and therefore the SAME column count across
+    # all figures. (Previously, only the swarm grid filtered methods, so the
+    # heatmaps showed 13 method configs while the swarm grid showed 12.)
+    data = filter_benchmark_methods(data)
+
     agg  = aggregate(data)
 
     metrics_to_plot = sorted(data["metric"].unique())
@@ -1789,10 +1891,11 @@ def main():
     agg_path = os.path.join(args.outdir, "aggregated_results.tsv")
     # MODIFIED: Write suffixed copy to TSV
     agg_out = _suffix_dataset_column(agg, no_normal_cells_set)
-    agg_out.to_csv(agg_path, sep="\t", index=False, na_rep='N/A')
+    agg_out.to_csv(agg_path, sep="\t", index=False, na_rep='NaN')
     print(f"\nAggregated data → {agg_path}")
     print("Done.")
 
 
 if __name__ == "__main__":
     main()
+
