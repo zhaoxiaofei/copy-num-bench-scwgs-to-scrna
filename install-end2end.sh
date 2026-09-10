@@ -154,3 +154,12 @@ for ctat in 'GRCh37_gencode_v19_CTAT_lib_Mar012021' 'GRCh38_gencode_v22_CTAT_lib
 done
 popd
 
+mkdir -p env
+en=$envname
+conda list       -n ${en} -e                      > env/${en}.requirements.list_e.txt
+conda env export -n ${en}                         > env/${en}.freeze.env_export.yml
+conda env export -n ${en} --no-builds             > env/${en}.freeze.env_export_no_builds.yml
+conda env export -n ${en} --from-history          > env/${en}.freeze.env_export_from_history.yml
+
+Rscript -e 'ip <- installed.packages(); ip[, c("Package", "Version")];' > env/${en}.r-versions.log
+
