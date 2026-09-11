@@ -378,6 +378,30 @@ BENCHMARK_EXCLUDED_METHODS = {
 # the SAME set object.
 SWARM_GRID_EXCLUDED_METHODS = BENCHMARK_EXCLUDED_METHODS
 
+# Official capitalisation of the scRNA-seq caller names (finding F-030: the
+# figures printed the raw, all-lowercase `method` values - e.g. "casper",
+# "copykat" - while the manuscript text uses CaSpER, CopyKAT, ...).  Keys are
+# the tool part of the raw `method` values; the part after the first "_"
+# (e.g. "autoInferRef") is kept as a separate line, exactly as before.
+METHOD_DISPLAY_NAMES = {
+    "casper": "CaSpER",
+    "conicsmat": "CONICSmat",
+    "copykat": "CopyKAT",
+    "infercna": "inferCNA",
+    "infercnv": "inferCNV",
+    "numbat": "Numbat",
+    "scevan": "SCEVAN",
+}
+
+
+def display_method_name(method: str) -> str:
+    """Figure label of a raw caller/config name, e.g. "copykat_autoInferRef"
+    -> "CopyKAT\\nautoInferRef"."""
+    name = str(method)
+    tool, _, suffix = name.partition("_")
+    pretty = METHOD_DISPLAY_NAMES.get(tool, tool)
+    return pretty if not suffix else pretty + "\n" + suffix.replace("_", "\n")
+
 
 def filter_benchmark_methods(data):
     """Drop rows whose ``method`` is in ``BENCHMARK_EXCLUDED_METHODS``.
@@ -1266,6 +1290,7 @@ def plot_heatmap(
         linecolor="#e0e0e0",
         annot_kws={"fontsize": 8, "fontfamily": "monospace", "va": "center"},
         cbar_kws={"label": "Mean value", "shrink": 0.75},
+        xticklabels=[display_method_name(c) for c in pivot_mean.columns],
         yticklabels=row_labels,
     )
 
@@ -1670,9 +1695,9 @@ def plot_metric_method_swarm_grid(
             ax.tick_params(axis="y", labelsize=6)
 
             if i == 0:
-                ax.set_title(method.replace('_', '\n'), fontsize=8.5) #(, rotation=35, ha="left", va="bottom")
+                ax.set_title(display_method_name(method), fontsize=8.5) #(, rotation=35, ha="left", va="bottom")
             elif i == len(row_metrics) - 1:
-                ax.set_xlabel(method.replace('_', '\n'), fontsize=8.5) #(, rotation=35, ha="left", va="bottom")
+                ax.set_xlabel(display_method_name(method), fontsize=8.5) #(, rotation=35, ha="left", va="bottom")
 
             for spine in ("top", "right"):
                 ax.spines[spine].set_visible(False)
