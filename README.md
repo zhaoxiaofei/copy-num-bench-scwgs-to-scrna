@@ -66,6 +66,10 @@ For every run the script writes the following artifacts into `--outdir`
   CopyKat, SCEVAN, Numbat, CaSpER, CONICSmat). Each cell shows
   `mean ± sd` across all cells in that dataset×method pair, with the color
   encoding the mean.
+  Caller columns are ordered by each tool's exact publication date and the
+  column labels carry the publication year (e.g. `inferCNV 2014`,
+  `SCEVAN 2023`), matching the caller figures of the gDNA benchmark
+  repository.
 * **Tumor-only heatmaps** — additional heatmaps restricted to tumor cells
   (labelled via the `celltype` column, falling back to `celltype_dna`) for
   the metrics listed in `--tumor_only_metrics`.
@@ -172,4 +176,3 @@ python plot_cnv_heatmaps.py \
 ## Acknowledgments
 
 This repository uses the codebase at [colomemaria/benchmark_scrnaseq_cnv_callers](https://github.com/colomemaria/benchmark_scrnaseq_cnv_callers) as its code-structure template.
-

@@ -283,8 +283,10 @@ PLOT_TYPES = [
 #
 # Row order below is deliberate: the tumor-only correlation/ROC-AUC metrics
 # first (require filtering to tumor cells via `filter_to_tumor`), then the
-# three all-cells metrics (coverage fractions + the classification ROC-AUC,
-# which is folded into `data` via `load_classification` in main()).
+# all-cells classification ROC-AUC (folded into `data` via
+# `load_classification` in main()), and finally the two coverage-fraction
+# metrics — mirroring the caller figures of the gDNA benchmark repository,
+# where the covered-genome fraction is the last row.
 # NOTE: Spearman Correlation Coefficient is intentionally excluded from this
 # grid (kept in the original per-metric heatmaps) since it correlates very
 # closely with Pearson CC and was judged redundant for this summary figure.
@@ -294,9 +296,9 @@ SWARM_GRID_TUMOR_ONLY_METRICS = [
     "CopyNumber loss ROC-AUC",
 ]
 SWARM_GRID_ALL_CELLS_METRICS = [
+    "Tumor_normal_classification_ROC_AUC_scRNA_aneuploidy_score_vs_scWGS_aneuploidy_status",
     "Fraction_of_the_cells_with_inferred_copy_numbers",
     "Fraction_of_the_exome_with_inferred_copy_numbers",
-    "Tumor_normal_classification_ROC_AUC_scRNA_aneuploidy_score_vs_scWGS_aneuploidy_status",
 ]
 # Row labels shown on the figure (kept short; the underscore-heavy raw metric
 # names above are display-unfriendly).
@@ -393,14 +395,54 @@ METHOD_DISPLAY_NAMES = {
     "scevan": "SCEVAN",
 }
 
+# Publication year and exact publication date of each caller, used to append the
+# year to the method labels and to order the method columns chronologically,
+# matching the caller figures of the gDNA benchmark repository:
+#   inferCNV  Science 2014-06-12                10.1126/science.1254257
+#   CONICSmat Bioinformatics 2018-09-01         10.1093/bioinformatics/bty316
+#   inferCNA  Cell 2019-07-18                   10.1016/j.cell.2019.06.024
+#   CaSpER    Nature Communications 2020-01-03  10.1038/s41467-019-13779-x
+#   CopyKAT   Nature Biotechnology 2021-01-18   10.1038/s41587-020-00795-2
+#   Numbat    Nature Biotechnology 2022-09-26   10.1038/s41587-022-01468-y
+#   SCEVAN    Nature Communications 2023-02-25  10.1038/s41467-023-36790-9
+METHOD_PUBLICATION = {
+    "infercnv" : ("inferCNV",  2014, "2014-06-12"),
+    "conicsmat": ("CONICSmat", 2018, "2018-09-01"),
+    "infercna" : ("inferCNA",  2019, "2019-07-18"),
+    "casper"   : ("CaSpER",    2020, "2020-01-03"),
+    "copykat"  : ("CopyKAT",   2021, "2021-01-18"),
+    "numbat"   : ("Numbat",    2022, "2022-09-26"),
+    "scevan"   : ("SCEVAN",    2023, "2023-02-25"),
+}
+
+
+def method_tool(method) -> str:
+    """Tool part of a raw method value, e.g. 'copykat_autoInferRef' -> 'copykat'."""
+    return str(method).partition("_")[0]
+
+
+def method_sort_key(method):
+    """Chronological column order (exact publication date); unknown callers last."""
+    tool = method_tool(method)
+    name, _, date = METHOD_PUBLICATION.get(
+        tool, (METHOD_DISPLAY_NAMES.get(tool, tool), None, "9999-99-99"))
+    return (date, str(method))
+
+
+def sorted_methods(methods) -> list:
+    """Method columns ordered by publication date (previously: alphabetically)."""
+    return sorted(methods, key=method_sort_key)
+
 
 def display_method_name(method: str) -> str:
     """Figure label of a raw caller/config name, e.g. "copykat_autoInferRef"
-    -> "CopyKAT\\nautoInferRef"."""
+    -> "CopyKAT 2021\\nautoInferRef"; the publication year follows the caller name."""
     name = str(method)
     tool, _, suffix = name.partition("_")
-    pretty = METHOD_DISPLAY_NAMES.get(tool, tool)
-    return pretty if not suffix else pretty + "\n" + suffix.replace("_", "\n")
+    pretty, year, _ = METHOD_PUBLICATION.get(
+        tool, (METHOD_DISPLAY_NAMES.get(tool, tool), None, "9999-99-99"))
+    label = F'{pretty} {year}' if year else pretty
+    return label if not suffix else label + "\n" + suffix.replace("_", "\n")
 
 
 def filter_benchmark_methods(data):
@@ -1193,8 +1235,9 @@ def plot_heatmap(
     if pivot_mean.empty:
         return
 
-    # Sort rows and columns alphabetically for consistency
-    pivot_mean = pivot_mean.sort_index(axis=0).sort_index(axis=1)
+    # Sort rows alphabetically; order the method columns by publication date
+    pivot_mean = pivot_mean.sort_index(axis=0)
+    pivot_mean = pivot_mean[sorted_methods(pivot_mean.columns)]
     pivot_q1   = pivot_q1.reindex_like(pivot_mean)
     pivot_q3   = pivot_q3.reindex_like(pivot_mean)
     pivot_n    = pivot_n.reindex_like(pivot_mean)
@@ -1543,12 +1586,13 @@ def plot_metric_method_swarm_grid(
         print("[swarm-grid] No rows resolved to data; skipping the swarm-grid figure.")
         return
 
-    # Columns: methods sorted alphabetically for a stable, reproducible layout.
+    # Columns: methods ordered chronologically by their publication date (labels
+    # carry the publication year) for a stable, reproducible layout.
     # (BENCHMARK_EXCLUDED_METHODS is already applied upstream — once in
     # `main()` via `filter_benchmark_methods`, with a defensive re-check in
     # `build_swarm_grid_data` — so long_df here is already filtered AND has
     # the SAME method set as the heatmaps / overview figure.)
-    col_methods = sorted(long_df["method"].unique())
+    col_methods = sorted_methods(long_df["method"].unique())
     if not col_methods:
         print("[swarm-grid] All methods were excluded; skipping the swarm-grid figure.")
         return
@@ -1771,7 +1815,8 @@ def plot_overview(agg: pd.DataFrame, outdir: str, fmt: str, dpi: int):
     if overview.empty:
         return
 
-    overview = overview.sort_index(axis=0).sort_index(axis=1)
+    overview = overview.sort_index(axis=0)
+    overview = overview[sorted_methods(overview.columns)]
     n_rows, n_cols = overview.shape
 
     # Use data-driven scaling with a neutral sequential colormap
@@ -1796,6 +1841,7 @@ def plot_overview(agg: pd.DataFrame, outdir: str, fmt: str, dpi: int):
         linewidths=0.5,
         linecolor="#e0e0e0",
         annot_kws={"fontsize": 8},
+        xticklabels=[display_method_name(c) for c in overview.columns],
         cbar_kws={"label": "Grand mean", "shrink": 0.6},
     )
     ax.set_title("Overview: grand-mean per method across all datasets",
@@ -1923,4 +1969,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
