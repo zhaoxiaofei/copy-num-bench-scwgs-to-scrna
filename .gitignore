@@ -1,0 +1,8 @@
+coseq_configs/*.stdout
+coseq_configs/*.stderr
+coseq_configs/*.stdboth
+coseq_configs/*.bak
+*.bak
+test/
+!test/evaluate_liftover.sh
+
