@@ -82,10 +82,59 @@ Usage
         [--summary_out ./heatmaps/dataset_summary.tsv] \
         [--tumor_only_metrics "Pearson Correlation Coefficient,Spearman Correlation Coefficient,CopyNumber gain ROC-AUC,CopyNumber loss ROC-AUC"] \
         [--no_tumor_only]
+
+Statistical tests (pairwise LaTeX table)
+----------------------------------------
+By default the script ALSO runs the pairwise statistical tests of the sibling
+module ``stat_tests.py`` (kept next to this script) on the SAME filtered
+method set as the figures and writes, into ``--outdir``:
+
+* ``stats.pairwise.tsv``  - one row per (metric, method_a, method_b)
+  comparison: inference level, n_clusters / n_units_paired, medians,
+  two-sided Wilcoxon P, Holm-adjusted P, rank-biserial effect size r with its
+  95% bootstrap CI (ci95_r_low/high), common-language effect size, ICC /
+  design-effect diagnostics.
+* ``stats.friedman.tsv``  - the Friedman omnibus per metric (cluster level +
+  unit-naive level).
+* ``stats.json``          - settings, cluster record, versions, seed.
+* ``stats.pairwise.tex``  - a copy-paste-ready booktabs LaTeX table in which
+  every row carries EXACTLY four statistics, in this order and nothing else:
+  n (effective sample size = number of independent materials, i.e. the
+  patients / cell lines behind the datasets), p (Holm-adjusted two-sided
+  Wilcoxon signed-rank P), r (matched-pairs rank-biserial effect size,
+  positive = the reference performs better) and the 95% percentile-bootstrap
+  CI of r.
+
+Winner / ordering analysis (winner_analysis.py)
+------------------------------------------------
+By default the script ALSO runs the ordering / unique-winner / top-2 tests
+of the sibling module ``winner_analysis.py`` (kept next to this script) on
+the SAME filtered method set - it needs NO reference method, so it also runs
+when the pairwise tests were skipped because of a bogus ``--stats_reference``.
+It writes, into ``--outdir``:
+
+* ``winner.order.tsv``     - per metric and method: Friedman mean rank, rank
+  position, raw median/mean, dominance counts, leading-group / Nemenyi
+  memberships.
+* ``winner.stepdown.tsv`` - one row per adjacent step-down comparison with
+  n, p, p_holm, r and the 95% bootstrap CI of r, plus the per-metric verdict
+  (unique winner / top-2 / no separation).
+* ``winner.stepdown.tex``  - booktabs LaTeX table of the inspected step-down
+  chain; every row carries EXACTLY n, p, r and the 95% CI of r.
+* ``winner.json``          - settings, per-metric verdicts, the consensus
+  across metrics, versions, seed.
+
+Options: ``--stats_reference`` (scenario A, default infercnv),
+``--stats_all_pairs``, ``--stats_cluster_key`` (material | dataset | none |
+custom columns), ``--stats_boot``, ``--stats_seed``, ``--stats_alpha``,
+``--stats_prefix``; ``--no_stats`` skips BOTH analyses; ``--no_winner_analysis``
+skips only the ordering/winner part. The tests only warn on
+failure - the figures are always produced.
 """
 
 import argparse
 import glob
+import json
 import os
 import re
 import sys
@@ -311,6 +360,21 @@ SWARM_GRID_ROW_DISPLAY_NAMES = {
     "Tumor_normal_classification_ROC_AUC_scRNA_aneuploidy_score_vs_scWGS_aneuploidy_status":
         "Tumor/normal\nclassification ROC-AUC\n\ni.e.,\nscRNA aneuploidy score\nvs\nscWGS aneuploidy status",
 }
+# Titles printed on the per-metric heatmaps.  The manuscript spells the metric
+# "copy-number ...", not the internal camel-case ID, so translate the two
+# ROC-AUC IDs at draw time only: the filenames, the CLI values and the TSV
+# keys keep the internal IDs the companion repository ships.
+METRIC_TITLE_DISPLAY_NAMES = {
+    "CopyNumber gain ROC-AUC": "Copy-number gain ROC-AUC",
+    "CopyNumber loss ROC-AUC": "Copy-number loss ROC-AUC",
+}
+
+
+def display_metric_title(metric):
+    """Manuscript spelling of an internal metric ID (figure titles only)."""
+    return METRIC_TITLE_DISPLAY_NAMES.get(str(metric), str(metric))
+
+
 # Full ordered row list for the swarm grid (union of the two lists above, in
 # the order rows are drawn top-to-bottom).
 SWARM_GRID_METRICS = SWARM_GRID_TUMOR_ONLY_METRICS + SWARM_GRID_ALL_CELLS_METRICS
@@ -403,7 +467,7 @@ METHOD_DISPLAY_NAMES = {
 #   inferCNA  Cell 2019-07-18                   10.1016/j.cell.2019.06.024
 #   CaSpER    Nature Communications 2020-01-03  10.1038/s41467-019-13779-x
 #   CopyKAT   Nature Biotechnology 2021-01-18   10.1038/s41587-020-00795-2
-#   Numbat    Nature Biotechnology 2022-09-26   10.1038/s41587-022-01468-y
+#   Numbat    Nature Biotechnology 2023 (online 2022-09-26)  10.1038/s41587-022-01468-y
 #   SCEVAN    Nature Communications 2023-02-25  10.1038/s41467-023-36790-9
 METHOD_PUBLICATION = {
     "infercnv" : ("inferCNV",  2014, "2014-06-12"),
@@ -411,7 +475,9 @@ METHOD_PUBLICATION = {
     "infercna" : ("inferCNA",  2019, "2019-07-18"),
     "casper"   : ("CaSpER",    2020, "2020-01-03"),
     "copykat"  : ("CopyKAT",   2021, "2021-01-18"),
-    "numbat"   : ("Numbat",    2022, "2022-09-26"),
+    # Label year = the reference-list (issue) year 2023; the exact date stays
+    # the online date so the chronological column order is unchanged.
+    "numbat"   : ("Numbat",    2023, "2022-09-26"),
     "scevan"   : ("SCEVAN",    2023, "2023-02-25"),
 }
 
@@ -419,6 +485,15 @@ METHOD_PUBLICATION = {
 def method_tool(method) -> str:
     """Tool part of a raw method value, e.g. 'copykat_autoInferRef' -> 'copykat'."""
     return str(method).partition("_")[0]
+
+
+# Display names of the per-configuration tokens that may follow the caller name
+# in a raw `method` value (e.g. "copykat_cellline" -> "CopyKAT 2021" plus the
+# "cell-line mode" label below).  Internal pipeline tokens such as "cellline"
+# must never reach a printed figure or a table caption.
+METHOD_SUFFIX_DISPLAY_NAMES = {
+    "cellline": "cell-line mode",
+}
 
 
 def method_sort_key(method):
@@ -442,7 +517,10 @@ def display_method_name(method: str) -> str:
     pretty, year, _ = METHOD_PUBLICATION.get(
         tool, (METHOD_DISPLAY_NAMES.get(tool, tool), None, "9999-99-99"))
     label = F'{pretty} {year}' if year else pretty
-    return label if not suffix else label + "\n" + suffix.replace("_", "\n")
+    if not suffix:
+        return label
+    return label + "\n" + "\n".join(
+        METHOD_SUFFIX_DISPLAY_NAMES.get(part, part) for part in suffix.split("_"))
 
 
 def filter_benchmark_methods(data):
@@ -560,6 +638,73 @@ def parse_args():
         "--no_normal_cells_glob",
         default="./results/*_bams/rna/*.cluster_stat_zero_ref_cells.rds",
         help=f"Glob for sentinel files written by scripts/identify_normal_cell_subset.R when NO normal-cell cluster was found. Datasets matching this will have '{NO_NORMAL_SET}' appended to their names in plots and TSVs."
+    )
+
+    # ---- statistical tests (pairwise LaTeX table: n, p, r, 95% CI of r) ----
+    p.add_argument(
+        "--no_stats", dest="stats", action="store_false", default=True,
+        help="Skip the pairwise statistical tests and the LaTeX/TSV tables "
+             "(default: run them; see stat_tests.py next to this script).",
+    )
+    p.add_argument(
+        "--stats_reference", default="infercnv", metavar="METHOD",
+        help="Reference method (scenario A) of the pairwise comparisons: does "
+             "the reference outperform method b? Default: infercnv.",
+    )
+    p.add_argument(
+        "--stats_all_pairs", action="store_true", default=False,
+        help="Test all method pairs instead of reference vs. every other method.",
+    )
+    p.add_argument(
+        "--stats_cluster_key", default=None, metavar="KEY",
+        help="Independent unit of the tests: default 'material' (the patient / "
+             "cell line behind the datasets; datasets sharing it are one "
+             "sample); 'dataset' for the per-dataset sensitivity analysis; "
+             "'none' for the naive per-cell tests (discouraged); or a comma-"
+             "separated list of custom columns.",
+    )
+    p.add_argument(
+        "--stats_prefix", default=None, metavar="PATH",
+        help="Output prefix of the statistical tables. Default: "
+             "<outdir>/stats (writes stats.pairwise.tsv, stats.friedman.tsv, "
+             "stats.json, stats.pairwise.tex).",
+    )
+    p.add_argument(
+        "--stats_boot", type=int, default=10000, metavar="N",
+        help="Bootstrap resamples for the CIs (default: 10000).",
+    )
+    p.add_argument("--stats_seed", type=int, default=1, metavar="SEED",
+                   help="Seed of the bootstrap RNG (default: 1).")
+    p.add_argument("--stats_alpha", type=float, default=0.05, metavar="ALPHA",
+                   help="Family-wise significance level for Holm rejection "
+                        "(default: 0.05).")
+    p.add_argument(
+        "--no_winner_analysis", dest="winner_analysis", action="store_false",
+        default=True,
+        help="Skip the ordering / unique-winner / top-2 analysis of "
+             "winner_analysis.py (default: run it next to the pairwise "
+             "tests; it needs no reference method). Implied by --no_stats.",
+    )
+    p.add_argument(
+        "--winner_prefix", default=None, metavar="PATH",
+        help="Output prefix of the winner/ordering tables. Default: "
+             "<outdir>/winner (writes winner.order.tsv, winner.stepdown.tsv, "
+             "winner.stepdown.tex, winner.json).",
+    )
+    # [REV] Hsu's MCB (comparison with the best) for Fig. 5: one family per
+    # metric on the same material-level units as the other analyses; needs no
+    # reference method either.
+    p.add_argument(
+        "--no_mcb_analysis", dest="mcb_analysis", action="store_false",
+        default=True,
+        help="Skip Hsu's MCB (comparison with the best) analysis of mcb.py "
+             "(default: run it next to the winner analysis; it needs no "
+             "reference method). Implied by --no_stats.",
+    )
+    p.add_argument(
+        "--mcb_prefix", default=None, metavar="PATH",
+        help="Output prefix of the MCB (comparison-with-the-best) tables. "
+             "Default: <outdir>/mcb (writes mcb.tsv, mcb.tex, mcb.json).",
     )
 
     return p.parse_args()
@@ -1337,7 +1482,8 @@ def plot_heatmap(
         yticklabels=row_labels,
     )
 
-    ax.set_title(metric + title_suffix, fontsize=13, fontweight="bold", pad=14)
+    ax.set_title(display_metric_title(metric) + title_suffix,
+                 fontsize=13, fontweight="bold", pad=14)
     ax.set_xlabel("Method", fontsize=11)
     ax.set_ylabel("Dataset", fontsize=11)
     ax.tick_params(axis="x", rotation=20, labelsize=9)
@@ -1598,6 +1744,54 @@ def plot_metric_method_swarm_grid(
         return
     n_rows, n_cols = len(row_metrics), len(col_methods)
 
+    # --- [REV] Fig. 5 source data (production-ready submission) -------------
+    # The exact long table this figure plots (one row per dataset x method x
+    # metric with the aggregated mean value, purity bin and technology), plus
+    # a .meta.json sidecar with the row/column display names: the data
+    # necessary and sufficient to re-plot the swarm grid without re-running
+    # any caller.  Never breaks the figure on a write failure.
+    try:
+        src_path = os.path.join(outdir, "fig5_source_data.tsv")
+        long_df.to_csv(src_path, sep="\t", index=False, na_rep="NA",
+                       float_format="%.6g")
+        meta = {
+            "figure": ("Fig. 5 (scRNA-seq CNV-caller benchmark: "
+                       "metric-by-method swarm grid)"),
+            "one_row": "dataset x method x metric (the value is the per-dataset "
+                       "mean over that metric's cells; tumor-only metrics use "
+                       "tumor cells only)",
+            "columns": {
+                "dataset": "co-sequencing dataset (one dot per dataset and panel)",
+                "method": "caller configuration (one column of the grid)",
+                "metric": "swarm-grid row (see metric_display_names)",
+                "mean": "the plotted y value",
+                "purity_bin": "dot colour: scWGS-derived tumor-purity bin "
+                              f"({list(PURITY_BIN_LABELS)} or Unknown)",
+                "technology": "dot marker: co-sequencing protocol "
+                              f"({list(TECHNOLOGY_MARKERS)} or Other)",
+            },
+            "metric_display_names": dict(SWARM_GRID_ROW_DISPLAY_NAMES),
+            "metric_scope": {m: ("tumor-only cells" if m in SWARM_GRID_TUMOR_ONLY_METRICS
+                                 else "all cells") for m in SWARM_GRID_METRICS},
+            "method_display_names": {m: display_method_name(m)
+                                      for m in col_methods},
+            "dataset_exclusion_rule": ("diploid-like tumors (purity-derived) and "
+                                        "wellDR-seq chip1-only datasets are "
+                                        "excluded from the main figure exactly as "
+                                        "in should_include_dataset_for_swarm_grid; "
+                                        "they remain in the supplementary heatmaps"),
+            "n_datasets": int(long_df["dataset"].nunique()),
+            "n_methods": int(long_df["method"].nunique()),
+            "n_rows": int(len(long_df)),
+            "generated_by": os.path.basename(sys.argv[0]),
+        }
+        with open(os.path.join(outdir, "fig5_source_data.meta.json"), "w") as fh:
+            json.dump(meta, fh, indent=2)
+        print(F"[swarm-grid] Fig. 5 source data written to {src_path} "
+              F"({len(long_df)} rows) + .meta.json")
+    except Exception as exc:  # never break the figure on a source-data failure
+        print(F"[swarm-grid] WARNING: could not write the Fig. 5 source data: {exc}")
+
     # --- Square figure sizing. Panel WIDTH is fixed (keeps column-label
     #     spacing consistent regardless of grid shape); panel HEIGHT instead
     #     stretches to fill whatever vertical room is available once the
@@ -1763,7 +1957,11 @@ def plot_metric_method_swarm_grid(
         legend_handles.append(Line2D(
             [0], [0], marker=marker, linestyle="", markersize=7,
             markerfacecolor="white", markeredgecolor="black",
-            markeredgewidth=0.8, label=str(tech).replace('wellDR-seq', 'wellDR-seq_chip1')))
+            # The key labels the shared co-sequencing PROTOCOL, matching the
+            # Fig. 5 legend ("shaped by its co-sequencing protocol"): the
+            # wellDR-seq rows are the chip1-only subset, but "_chip1" is a
+            # per-dataset identifier, not a protocol name.
+            markeredgewidth=0.8, label=str(tech)))
     # Only show the "Other" (unrecognized-technology) legend entry if at
     # least one plotted datapoint actually falls into that bucket; otherwise
     # it's a dead legend entry that never appears in the figure.
@@ -1842,6 +2040,7 @@ def plot_overview(agg: pd.DataFrame, outdir: str, fmt: str, dpi: int):
         linecolor="#e0e0e0",
         annot_kws={"fontsize": 8},
         xticklabels=[display_method_name(c) for c in overview.columns],
+        yticklabels=[display_metric_title(m) for m in overview.index],
         cbar_kws={"label": "Grand mean", "shrink": 0.6},
     )
     ax.set_title("Overview: grand-mean per method across all datasets",
@@ -1909,6 +2108,112 @@ def main():
     # all figures. (Previously, only the swarm grid filtered methods, so the
     # heatmaps showed 13 method configs while the swarm grid showed 12.)
     data = filter_benchmark_methods(data)
+
+    # --- Statistical tests: pairwise table (n, p, r, 95% CI of r) -----------
+    # Runs on the SAME filtered method set as every figure, so the tested
+    # numbers and the figures can never drift apart (the same design as the
+    # scWGS companion repository). Writes <outdir>/stats.pairwise.{tsv,tex},
+    # <outdir>/stats.friedman.tsv and <outdir>/stats.json. A missing or broken
+    # stat_tests.py only warns - the figures still get produced.
+    if args.stats:
+        # cluster-key resolution shared by both analyses
+        _ck = (args.stats_cluster_key or "").strip().lower()
+        if _ck in ("", "material", "default"):
+            _cluster_key_cols = None            # module default: material
+        elif _ck in ("none", "naive", "off"):
+            _cluster_key_cols = []              # naive per-unit mode
+        elif _ck in ("dataset", "per-dataset"):
+            _cluster_key_cols = ["dataset"]     # per-dataset sensitivity
+        else:
+            _cluster_key_cols = [c.strip() for c in
+                                 args.stats_cluster_key.split(",") if c.strip()]
+        try:
+            import stat_tests
+        except ImportError:
+            stat_tests = None
+            print("[stats] stat_tests.py not found next to this script: "
+                  "statistical tests skipped")
+        if stat_tests is not None:
+            stats_prefix = args.stats_prefix or os.path.join(args.outdir, "stats")
+            try:
+                print(F"\nRunning the pairwise statistical tests "
+                      F"(reference: {args.stats_reference}) -> {stats_prefix}.stats.*")
+                stat_tests.run_scrna_benchmark_stats(
+                    data, stats_prefix,
+                    reference=args.stats_reference,
+                    all_pairs=args.stats_all_pairs,
+                    cluster_key_cols=_cluster_key_cols,
+                    n_resamples=args.stats_boot,
+                    seed=args.stats_seed,
+                    alpha=args.stats_alpha)
+            except SystemExit as exc:
+                print(F"[stats] skipped: {exc}")
+            except Exception as exc:  # never break the figures on a stats failure
+                print(F"[stats] WARNING: statistical tests failed ({exc}); "
+                      F"the figures continue")
+
+        # --- Winner / ordering analysis (unique winner? top-2? ordering?) ---
+        # Needs NO reference method, so it also runs when the pairwise table
+        # was skipped because of a bogus --stats_reference. Writes
+        # <outdir>/winner.{order.tsv,stepdown.tsv,stepdown.tex,json}; failures
+        # only warn - the figures always get produced.
+        if args.winner_analysis:
+            try:
+                import winner_analysis
+            except ImportError:
+                winner_analysis = None
+                print("[winner] winner_analysis.py not found next to this "
+                      "script: ordering/winner analysis skipped")
+            if winner_analysis is not None:
+                winner_prefix = args.winner_prefix or os.path.join(
+                    args.outdir, "winner")
+                try:
+                    print(F"\nRunning the ordering / unique-winner / top-2 "
+                          F"analysis -> {winner_prefix}.*")
+                    winner_analysis.run_scrna_winner_analysis(
+                        data, winner_prefix,
+                        cluster_key_cols=_cluster_key_cols,
+                        n_resamples=args.stats_boot,
+                        seed=args.stats_seed,
+                        alpha=args.stats_alpha)
+                except SystemExit as exc:
+                    print(F"[winner] skipped: {exc}")
+                except Exception as exc:  # never break the figures
+                    print(F"[winner] WARNING: winner analysis failed ({exc}); "
+                          F"the figures continue")
+
+        # --- Hsu's MCB (comparison with the best) ---------------------------
+        # The interval-based view of the same reference-free questions: per
+        # metric, simultaneous CIs of theta_i - max_{j != i} theta_j (gap to
+        # the best) at the material level; the leading group of the MCB
+        # intervals is the interval-based counterpart of the step-down leading
+        # group of winner_analysis.py.  Needs no reference method, so it also
+        # runs when the pairwise table was skipped because of a bogus
+        # --stats_reference.  Writes <outdir>/mcb.{tsv,tex,json}; failures
+        # only warn - the figures always get produced.
+        if args.mcb_analysis:
+            try:
+                import mcb as mcb_mod
+            except ImportError:
+                mcb_mod = None
+                print("[mcb] mcb.py not found next to this script: "
+                      "comparison-with-the-best analysis skipped")
+            if mcb_mod is not None:
+                mcb_prefix = args.mcb_prefix or os.path.join(args.outdir, "mcb")
+                try:
+                    print(F"\nRunning Hsu's MCB (comparison with the best) "
+                          F"-> {mcb_prefix}.*")
+                    mcb_mod.run_scrna_mcb(
+                        data, mcb_prefix,
+                        cluster_key_cols=_cluster_key_cols,
+                        n_resamples=args.stats_boot,
+                        seed=args.stats_seed,
+                        alpha=args.stats_alpha)
+                except SystemExit as exc:
+                    print(F"[mcb] skipped: {exc}")
+                except Exception as exc:  # never break the figures
+                    print(F"[mcb] WARNING: MCB analysis failed ({exc}); "
+                          F"the figures continue")
 
     agg  = aggregate(data)
 

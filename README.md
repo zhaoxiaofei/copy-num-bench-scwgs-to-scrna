@@ -86,6 +86,163 @@ For every run the script writes the following artifacts into `--outdir`
   `ref_and_purity_inference_method`.
 * **`aggregated_results.tsv`** — the long-form mean ± sd table that backs
   every heatmap (handy for downstream statistical testing).
+* **`stats.pairwise.tsv` / `stats.friedman.tsv` / `stats.json`** — the
+  pairwise statistical tests (see the next section), run by default on the
+  same filtered method set as the figures.
+* **`stats.pairwise.tex`** — a copy-paste-ready booktabs LaTeX table of the
+  pairwise comparisons; every row carries exactly four statistics, in this
+  order and nothing else: the effective sample size **n** (number of
+  independent materials — the patients / cell lines behind the datasets),
+  the Holm-adjusted **p** (two-sided Wilcoxon signed-rank), the effect size
+  **r** (matched-pairs rank-biserial correlation; positive = the reference
+  performs better) and the **95% CI** of r (percentile bootstrap over the
+  independent materials).
+
+### Statistical tests (`stat_tests.py`)
+
+`stat_tests.py` (repository root, next to `plot_cnv_heatmaps.py`) adds the
+same statistical testing layer that the scWGS benchmark repository
+[copy-num-bench-scwgs](https://github.com/zhaoxiaofei/copy-num-bench-scwgs)
+uses, adapted to the co-sequencing design:
+
+* **Design:** every method is evaluated on the same cells of the same
+  datasets, so per-cell metrics are paired (blocked) by cell. The
+  independent experimental unit is the biological **material** (patient /
+  cell line) behind the datasets — derived from the dataset name, so chips of
+  one patient (`BCIS106T_chip1/chip2`, `ECIS44T_chip1-5`, …), one cell line
+  across technologies (`HCT116` in DNTR-seq and scONE-seq) and
+  reference-cell configuration variants of one dataset collapse into ONE
+  unit. `--stats_cluster_key dataset` analyses at the per-dataset level
+  (sensitivity analysis); `none` reverts to the naive per-cell tests
+  (discouraged: pseudoreplication — see the module docstring for the
+  measured demonstration of the failure mode).
+* **Tests:** Friedman omnibus per metric across methods (on per-material
+  medians); two-sided Wilcoxon signed-rank + exact sign test post-hoc on the
+  per-material medians of the paired per-cell differences (reference method
+  vs. every other; `--stats_all_pairs` for all pairs); Holm-Bonferroni
+  correction within each metric family.
+* **Effect size:** matched-pairs rank-biserial correlation r (positive = the
+  reference performs better) with a 95% percentile-bootstrap CI obtained by
+  resampling the materials; the paired common-language effect size and the
+  median difference with its CI stay in the TSVs.
+* **Diagnostics:** per comparison, the ICC of the paired differences within
+  materials, the design effect, the effective sample size and the
+  naive-vs-cluster P-inflation ratio — the degree of dependence is measured,
+  not assumed away.
+
+By default `plot_cnv_heatmaps.py` runs the tests (disable with `--no_stats`)
+and writes the tables next to the figures. The reference method ("scenario
+A") defaults to `infercnv`; change it with `--stats_reference`. Standalone
+use on the raw evaluation TSVs:
+
+```bash
+python stat_tests.py -i 'results/*solo-genefull_output/evaluation/*.tsv' \
+    -o heatmaps/stats --reference infercnv
+python stat_tests.py -i aggregated_per_cell_long.tsv -o heatmaps/stats  # unified long TSV
+python stat_tests.py -o heatmaps/stats --latex-table   # re-print the table
+python test_stat_tests.py                             # self-test
+```
+
+### Ordering / winner / top-2 tests (`winner_analysis.py`)
+
+The pairwise table answers "does the reference outperform method b?";
+`winner_analysis.py` (repository root, next to `stat_tests.py`) answers the
+three questions a reference-based comparison cannot — it needs **no
+reference method** and treats all callers symmetrically:
+
+1. **Does an approximate ordering of the callers exist?** Friedman omnibus
+   per metric (H0: the methods are exchangeable across materials) plus
+   Kendall's W with a 95% bootstrap CI and the bootstrap rank-stability
+   (mean Spearman ρ between the observed ordering and the orderings of
+   resampled materials; reproduction rate of the leading group). The
+   ordering is "approximate" when it is supported (Friedman P ≤ α) but at
+   least one adjacent pair of the ordering is not separable at the
+   family-wise level.
+2. **Does a unique winner exist?** Methods are ordered by their Friedman
+   mean rank over the per-material method medians; the step-down procedure
+   walks the ordered methods from the top and cuts at the first separable
+   adjacent pair. A unique winner exists iff M1 vs M2 is separable
+   (Holm-adjusted two-sided P ≤ α and rank-biserial r > 0).
+3. **Does a top-2 group exist?** iff M1 vs M2 is NOT separable AND M2 vs M3
+   IS separable (two statistically indistinguishable leaders ahead of every
+   remaining method). The general verdict covers any leading-group size
+   (g = 1 unique winner, g = 2 top-2, g = k no separation).
+
+Cross-checks: the Nemenyi critical-difference grouping on the Friedman mean
+ranks; the leading group's internal homogeneity and its separation from
+below verified on **all** cross pairs (not only the adjacent ones); lower-
+is-better metrics (e.g. runtime) can be declared with
+`--lower-is-better METRIC` so that "larger is better" always holds after
+orientation.
+
+Outputs (prefix `-o`, default `heatmaps/winner`): `winner.order.tsv`
+(per metric and method: rank, mean rank, median, dominance counts,
+group memberships), `winner.stepdown.tsv` (one row per adjacent step-down
+comparison with n, p, p_holm, r and the 95% bootstrap CI of r plus the
+per-metric verdict), `winner.stepdown.tex` (booktabs table; every row
+carries exactly n, p, r and the 95% CI of r) and `winner.json` (settings,
+per-metric verdicts, consensus across metrics). By default
+`plot_cnv_heatmaps.py` runs this analysis next to the pairwise tests
+(disable with `--no_winner_analysis`; it also runs when the pairwise table
+was skipped because of a bogus `--stats_reference`).
+
+```bash
+python winner_analysis.py -i 'results/*solo-genefull_output/evaluation/*.tsv' \
+    -o heatmaps/winner
+python winner_analysis.py -i aggregated_per_cell_long.tsv -o heatmaps/winner
+python winner_analysis.py -o heatmaps/winner --latex-table  # re-print the table
+python test_stat_tests.py                                  # self-test (Parts A-F)
+```
+
+### Comparison with the best - Hsu's MCB (`mcb.py`)
+
+`mcb.py` (repository root, next to `stat_tests.py` / `winner_analysis.py`) adds
+the classical interval view of the same reference-free questions. Per metric
+(= per Fig. 5 swarm-grid panel) it builds, for every method configuration i,
+a **simultaneous 95% confidence interval** for
+
+    theta_i - max_{j != i} theta_j        ("method i versus the best of the others")
+
+on the same material-level units as the other analyses: an interval entirely
+below 0 = significantly **inferior** to the best; entirely above 0 = the
+**unique winner** (possible only for the sample-best method); brackets 0 =
+**indistinguishable from the best**, i.e. a member of the leading group (a
+group of size 2 is the "top-2" of the manuscript's observations — the
+interval-based counterpart of the step-down leading group). The intervals are
+Tukey-style projections of studentized **cluster bootstrap max-|t|** bands
+(every replicate recomputes its own per-pair standard error; seeded and
+reproducible); a studentized-range cross-check and the Friedman omnibus
+accompany every family, and the per-metric verdicts plus the consensus across
+metrics are written to the JSON.
+
+Outputs (prefix `-o`, default `heatmaps/mcb`): `mcb.tsv` (one row per
+(metric, method): gap to the best, its simultaneous MCB interval, the
+MCB-adjusted one-sided p, the rank-biserial r versus the best competitor with
+its bootstrap CI, verdicts), `mcb.tex` (booktabs table, one section per
+metric; every row carries **exactly n, p, r and the 95% CI** of the gap to
+the best) and `mcb.json`. By default `plot_cnv_heatmaps.py` runs this
+analysis next to the winner analysis (disable with `--no_mcb_analysis`; it
+needs no reference method, so it also runs when the pairwise table was
+skipped because of a bogus `--stats_reference`). Lower-is-better metrics are
+declared with `--lower-is-better` exactly as in `winner_analysis.py`.
+
+```bash
+python mcb.py -i 'results/*solo-genefull_output/evaluation/*.tsv' -o heatmaps/mcb
+python mcb.py -i aggregated_per_cell_long.tsv -o heatmaps/mcb --lower-is-better runtime
+python mcb.py -o heatmaps/mcb --latex-table     # re-print the table
+python test_stat_tests.py                       # Part F covers the MCB layer
+```
+
+### Fig. 5 source data
+
+`plot_cnv_heatmaps.py` writes `heatmaps/fig5_source_data.tsv` plus
+`fig5_source_data.meta.json` next to the swarm grid: one row per
+(dataset x method x metric) with the plotted mean value, the scWGS-derived
+tumor-purity bin (dot colour) and the co-sequencing protocol (dot marker),
+with the row/column display names in the sidecar — the data necessary and
+sufficient to re-plot Fig. 5 without re-running any caller. The scWGS
+companion repository's `entire_pipeline.sh` collects this table (and the
+scRNA MCB families) into the submission package's `source_data/` directory.
 
 ### Prerequisites
 
