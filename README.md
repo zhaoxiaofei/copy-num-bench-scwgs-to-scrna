@@ -96,7 +96,11 @@ For every run the script writes the following artifacts into `--outdir`
   the Holm-adjusted **p** (two-sided Wilcoxon signed-rank), the effect size
   **r** (matched-pairs rank-biserial correlation; positive = the reference
   performs better) and the **95% CI** of r (percentile bootstrap over the
-  independent materials).
+  independent materials).  The pairwise and step-down tables are emitted as
+  `landscape` `longtable`s with `\captionof{table}` captions (`\scriptsize`,
+  headers repeated on every page, `\addtocounter{table}{-1}` after the long
+  table); the MCB table uses the same layout with one section per metric.
+  Every CI header uses `\qty{95}{\percent}` (siunitx).
 
 ### Statistical tests (`stat_tests.py`)
 

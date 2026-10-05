@@ -49,6 +49,27 @@ import stat_tests  # noqa: E402
 
 rng = np.random.default_rng(7)
 
+
+def _check_tex_columns(text, ncols):
+    """Assert that every table row occupies exactly `ncols` columns.
+
+    Rows are the lines ending in the LaTeX row terminator; a
+    \\multicolumn{N}{..}{..} cell counts as N columns.
+    """
+    for ln in text.splitlines():
+        s = ln.strip()
+        if not s or not s.endswith('\\\\'):
+            continue
+        if s.startswith('\\') and not s.startswith('\\multicolumn'):
+            continue
+        cells = 0
+        for part in s.split('&'):
+            m = re.match(r'\s*\\multicolumn\{(\d+)\}', part)
+            cells += int(m.group(1)) if m else 1
+        assert cells == ncols, \
+            F'LaTeX row carries {cells} columns, expected {ncols}: {s[:100]}'
+
+
 # ------------------------------------------------------------------ Part A --
 method_effect = {'infercnv': 0.05, 'copykat': 0.0, 'casper': -0.06, 'scevan': 0.02}
 datasets = {
@@ -122,17 +143,23 @@ print(F'OK Part A: {len(pw)} pairwise rows, n=7 materials, CI of r present '
 tex = prefix + '.pairwise.tex'
 assert os.path.isfile(tex)
 text = open(tex).read()
-assert '$n$ & $p$ & $r$ & 95\\% CI' in text
-assert 'Median diff' not in text and 'Paired $n$' not in text
+assert text.count(r'\begin{landscape}') == 1 and text.count(r'\end{landscape}') == 1
+assert text.count(r'\captionof{table}{') == 1
+assert text.count(r'\begin{longtable}{llrrrr}') == 1
+assert text.count(r'\endfirsthead') == 1 and text.count(r'\endhead') == 1
+assert text.count(r'\addtocounter{table}{-1}') == 1
+assert 'Metric & Method $b$ & $n$ & $p$ & $r$ & \\qty{95}{\\percent} CI' in text
+assert 'Median diff' not in text and 'Paired $n$' not in text and '95\\%' not in text
+_check_tex_columns(text, 6)
 body = [ln for ln in text.splitlines()
-        if ln.startswith('    ') and ln.rstrip().endswith('\\')
+        if ln.startswith('\t\t') and ln.rstrip().endswith('\\')
         and '$n$ & $p$' not in ln and 'toprule' not in ln
         and 'midrule' not in ln and 'bottomrule' not in ln]
 assert body and all(ln.count('&') == 5 for ln in body), \
     'rows must have exactly 6 cells (metric, method_b, n, p, r, CI)'
 assert len(re.findall(r'\[-?\d+\.\d{2}, -?\d+\.\d{2}\]', text)) >= len(body) - 1
 assert 'CopyKAT 2021' in text and 'CaSpER 2020' in text
-print(F'OK Part A: LaTeX table = exactly n, p, r, CI ({len(body)} rows)')
+print(F'OK Part A: LaTeX landscape longtable = exactly n, p, r, CI ({len(body)} rows)')
 
 # ------------------------------------------------------------------ Part B --
 stat_tests.run_scrna_benchmark_stats(df, prefix + '.naive', reference='infercnv',
@@ -301,7 +328,7 @@ assert os.path.isfile(cli_prefix + '.pairwise.tex')
 ret = subprocess.run([sys.executable, os.path.join(HERE, 'stat_tests.py'),
                       '-o', cli_prefix, '--latex-table', '--reference', 'infercnv'],
                      capture_output=True, text=True, cwd=HERE)
-assert ret.returncode == 0 and '$n$ & $p$ & $r$ & 95\\% CI' in ret.stdout
+assert ret.returncode == 0 and '\\qty{95}{\\percent} CI' in ret.stdout
 print('OK Part D: CLI round trip (loader -> stats -> LaTeX table)')
 
 # plot_cnv_heatmaps.py integration
@@ -319,9 +346,9 @@ for f in ['stats.pairwise.tsv', 'stats.friedman.tsv', 'stats.json',
 hm_pw = pd.read_csv(os.path.join(hm_out, 'stats.pairwise.tsv'), sep='\t')
 assert hm_pw['n_clusters'].eq(3).all()
 hm_tex = open(os.path.join(hm_out, 'stats.pairwise.tex')).read()
-assert '$n$ & $p$ & $r$ & 95\\% CI' in hm_tex
+assert r'\captionof{table}' in hm_tex and r'\qty{95}{\percent} CI' in hm_tex
 hm_win_tex = open(os.path.join(hm_out, 'winner.stepdown.tex')).read()
-assert '$n$ & $p$ & $r$ & 95\\% CI' in hm_win_tex
+assert r'\captionof{table}' in hm_win_tex and r'\qty{95}{\percent} CI' in hm_win_tex
 
 hm_out2 = os.path.join(OUT, 'hmD_nostats')
 ret = subprocess.run([sys.executable, os.path.join(HERE, 'plot_cnv_heatmaps.py'),
@@ -465,9 +492,14 @@ print(F'OK Part E: verdicts correct (unique winner / top-2 / flat / lower-is-bet
 
 # LaTeX step-down table: EXACTLY n, p, r, 95% CI per row
 texE = open(prefixE + '.stepdown.tex').read()
-assert 'Metric & Method $a$ & Method $b$ & $n$ & $p$ & $r$ & 95\\% CI' in texE
+assert (r'Metric & Method $a$ & Method $b$ & $n$ & $p$ & $r$ & \qty{95}{\percent} CI'
+        in texE)
+assert texE.count(r'\begin{longtable}{lllrrrr}') == 1
+assert texE.count(r'\captionof{table}{') == 1
+assert '95\\%' not in texE
+_check_tex_columns(texE, 7)
 bodyE = [ln for ln in texE.splitlines()
-         if ln.startswith('    ') and ln.rstrip().endswith('\\\\')
+         if ln.startswith('\t\t') and ln.rstrip().endswith('\\\\')
          and 'toprule' not in ln and 'midrule' not in ln
          and 'bottomrule' not in ln and '$n$ &' not in ln]
 assert bodyE and all(ln.count('&') == 6 for ln in bodyE), \
@@ -495,7 +527,7 @@ assert (rt_cli['method_a'] != rt_cli['method_b']).all()
 ret = subprocess.run([sys.executable, os.path.join(HERE, 'winner_analysis.py'),
                       '-o', cliE, '--latex-table'],
                      capture_output=True, text=True, cwd=HERE)
-assert ret.returncode == 0 and '$n$ & $p$ & $r$ & 95\\% CI' in ret.stdout
+assert ret.returncode == 0 and '\\qty{95}{\\percent} CI' in ret.stdout
 print('OK Part E: CLI round trip (loader -> winner analysis -> LaTeX table)')
 
 # stat_tests.py CLI on the SAME unified long TSV (documented input kind; the
@@ -599,7 +631,7 @@ assert sd_cliF['n_units'].eq(20).all()
 ret = subprocess.run([sys.executable, os.path.join(HERE, 'mcb.py'),
                       '-o', cliF, '--latex-table'],
                      capture_output=True, text=True, cwd=HERE)
-assert ret.returncode == 0 and '$n$ & $p$ & $r$ & 95\\% CI' in ret.stdout
+assert ret.returncode == 0 and '\\qty{95}{\\percent} CI' in ret.stdout
 print('OK F.2: MCB CLI round trip (loader -> MCB -> LaTeX table)')
 
 # F.3 - plot_cnv_heatmaps.py integration (Part D ran it with the current code)
@@ -632,10 +664,14 @@ print(F'OK F.3: plot_cnv_heatmaps.py integration (MCB default-on, skipped by '
 
 # F.4 - LaTeX regression: exactly n, p, r, 95% CI per row (+ compile)
 texF = open(prefixF + '.tex').read()
-assert 'Method & $n$ & $p$ & $r$ & 95\\% CI' in texF
-assert texF.count('multicolumn{5}{l}') == 4          # one section per metric
+assert r'Method & $n$ & $p$ & $r$ & \qty{95}{\percent} CI' in texF
+assert texF.count(r'\begin{longtable}{lrrrr}') == 1
+assert texF.count(r'\captionof{table}{') == 1
+assert texF.count('multicolumn{5}{l}') >= 1          # one section per metric
+assert '95\\%' not in texF
+_check_tex_columns(texF, 5)
 bodyF = [ln for ln in texF.splitlines()
-         if ln.startswith('    ') and ln.rstrip().endswith('\\\\')
+         if ln.startswith('\t\t') and ln.rstrip().endswith('\\\\')
          and 'multicolumn' not in ln and '$n$ &' not in ln
          and 'toprule' not in ln and 'midrule' not in ln
          and 'bottomrule' not in ln]
@@ -646,7 +682,11 @@ if shutil.which('tectonic'):
     os.makedirs(tex_dir, exist_ok=True)
     shutil.copyfile(prefixF + '.tex', os.path.join(tex_dir, 'scrna_mcb.tex'))
     with open(os.path.join(tex_dir, 'wrap.tex'), 'w') as fh:
-        fh.write('\\documentclass{article}\\usepackage{booktabs}\\begin{document}'
+        fh.write('\\documentclass{article}\n'
+                 '\\usepackage{booktabs}\n\\usepackage{longtable}\n'
+                 '\\usepackage{pdflscape}\n\\usepackage{caption}\n'
+                 '\\usepackage{siunitx}\n'
+                 '\\begin{document}\n'
                  '\\input{scrna_mcb.tex}\\end{document}\n')
     ret = subprocess.run(['tectonic', 'wrap.tex'], cwd=tex_dir,
                          capture_output=True, text=True)
