@@ -39,6 +39,11 @@ the MATERIAL, patient or cell line - exactly like stat_tests.py):
     BETTER-ranked method, so "a outperforms b" is confirmed iff
     p_holm <= alpha AND r > 0 (r = matched-pairs rank-biserial; two-sided P
     plus the sign of r, the same convention as the paper).
+*   Both statistics are kept with clear names: the primary separation test
+    uses the per-material difference of the method medians (the Friedman/MCB
+    matrix columns); the cell-PAIRED descriptives (median/mean of the
+    per-cell differences and their common-language effect) are reported
+    alongside as `*_unit_paired_naive` for heterogeneity/skew checks.
 *   Step-down leading group: walk the ordered methods from the top and cut at
     the FIRST adjacent pair (M_g, M_{g+1}) that IS separable; the leading
     group is {M_1, ..., M_g}.  Hence
@@ -162,8 +167,9 @@ def _pair_stats(x, y, labels, cluster_agg='median', n_resamples=2000, seed=1):  
     percentile-bootstrap CI all run on the paired differences of the two
     methods' per-cluster (material) aggregates - exactly the columns of the
     Friedman/MCB complete-block matrix - as in stat_tests.py (labels=None ->
-    naive per-unit mode).  x is the BETTER-ranked method's values, so
-    r > 0 means "x outperforms y".
+    naive per-unit mode).  The cell-PAIRED descriptives of d = x - y are kept
+    as `*_unit_paired_naive` columns.  x is the BETTER-ranked method's
+    values, so r > 0 means "x outperforms y".
     """
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -209,6 +215,12 @@ def _pair_stats(x, y, labels, cluster_agg='median', n_resamples=2000, seed=1):  
         'ci95_r_low': r_lo, 'ci95_r_high': r_hi, 'ci_r_method': r_ci_method,
         'wilcoxon_W': w['statistic'] if w else float('nan'),
         'median_diff_a_minus_b': float(np.median(dv)) if len(dv) else float('nan'),
+        'median_diff_unit_paired_naive': (float(np.median(d)) if len(d)
+                                          else float('nan')),
+        'mean_diff_unit_paired_naive': (float(np.mean(d)) if len(d)
+                                        else float('nan')),
+        'cl_effect_unit_paired_naive': (_ST.common_language_paired(d) if len(d)
+                                        else float('nan')),
         'note': note,
     }
 
@@ -459,6 +471,9 @@ def _analyse_metric(msub, metric, raw_summaries, cluster_mode, cluster_agg,
             'pvalue_sign_test': rec['pvalue_sign_test'],
             'wilcoxon_W': rec['wilcoxon_W'],
             'median_diff_a_minus_b': rec['median_diff_a_minus_b'],
+            'median_diff_unit_paired_naive': rec['median_diff_unit_paired_naive'],
+            'mean_diff_unit_paired_naive': rec['mean_diff_unit_paired_naive'],
+            'cl_effect_unit_paired_naive': rec['cl_effect_unit_paired_naive'],
             'a_beats_b': rec['a_beats_b'],
             'is_boundary': bool(boundary == step),
             'is_shown': bool(boundary is None or step <= boundary),

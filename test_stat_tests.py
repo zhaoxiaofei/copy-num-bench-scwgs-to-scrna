@@ -117,6 +117,8 @@ need_cols = ['inference_level', 'cluster_key', 'n_clusters', 'n_units_paired',
              'rank_biserial_r', 'ci95_r_low', 'ci95_r_high', 'ci_r_method',
              'cl_effect_paired', 'ci95_median_diff_low', 'ci95_median_diff_high',
              'pvalue_unit_naive', 'rank_biserial_r_unit_naive',
+             'median_diff_unit_paired_naive', 'mean_diff_unit_paired_naive',
+             'cl_effect_unit_paired_naive',
              'icc_within_cluster_d', 'design_effect', 'n_effective_units',
              'p_inflation_ratio']
 missing = [c for c in need_cols if c not in pw.columns]
@@ -712,6 +714,10 @@ assert _b2['wilcoxon_W'] == stat_tests.wilcoxon_signed_rank(
     _units, np.zeros_like(_units))['statistic']
 assert _b2['median_diff_a_minus_b'] == float(np.median(_units))
 assert float(np.median(_x - _y)) != _b2['median_diff_a_minus_b']
+# both statistics are kept, with the cell-paired one explicitly named
+assert _b2['median_diff_unit_paired_naive'] == float(np.median(_x - _y))
+assert _b2['mean_diff_unit_paired_naive'] == float(np.mean(_x - _y))
+assert _b2['cl_effect_unit_paired_naive'] == stat_tests.common_language_paired(_x - _y)
 print('OK G.1 [B2/B3]: cluster pairwise units = difference of per-cluster medians')
 
 print('\nAll stat_tests + winner_analysis + mcb end-to-end tests PASSED')

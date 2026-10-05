@@ -138,8 +138,13 @@ uses, adapted to the co-sequencing design:
   correction within each metric family.
 * **Effect size:** matched-pairs rank-biserial correlation r (positive = the
   reference performs better) with a 95% percentile-bootstrap CI obtained by
-  resampling the materials; the paired common-language effect size and the
-  median difference with its CI stay in the TSVs.
+  resampling the materials; the primary median difference and common-language
+  effect are computed on the per-material differences of the method medians
+  (the Friedman/MCB units) with a unit-bootstrap CI.  The cell-PAIRED
+  descriptives (`median_diff_unit_paired_naive`,
+  `mean_diff_unit_paired_naive`, `cl_effect_unit_paired_naive`: median/mean
+  of the per-cell d = x - y and its common-language effect) stay in the TSVs
+  for heterogeneity/skew checks.
 * **Diagnostics:** per comparison, the ICC of the paired differences within
   materials, the design effect, the effective sample size and the
   naive-vs-cluster P-inflation ratio — the degree of dependence is measured,

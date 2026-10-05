@@ -95,6 +95,11 @@ per-cell quantities are kept as DESCRIPTIVE statistics and as flagged naive
   clusters, the design effect, the effective sample size, and the
   naive-vs-cluster P-value ratio - the degree of dependence in the actual
   data is measured, not assumed away.
+* The per-cell PAIRED descriptives (median/mean of the per-cell differences
+  d = x - y and their common-language effect) are kept as
+  `*_unit_paired_naive` columns; they answer a different question than the
+  primary per-material difference of the method medians and can disagree when
+  the per-cell advantage is heterogeneous or the scores are skewed.
 
 LaTeX table (the deliverable of run_scrna_benchmark_stats)
 ==========================================================
@@ -481,7 +486,9 @@ def _pairwise_record(x, y, labels, base, cluster_agg='median', n_resamples=10000
     aggregated to one value per cluster first and the paired difference of
     those two cluster-level values is tested - identical to the paired
     differences of the columns of the Friedman/MCB complete-block matrix.
-    The naive per-unit comparison is kept for transparency.
+    The naive per-unit comparison is kept for transparency, including the
+    unit-PAIRED descriptives (`*_unit_paired_naive`: median/mean of d = x - y
+    and the common-language effect), which are not the primary estimand.
     x, y: paired per-unit values, equal length; labels: cluster id per
     element (None -> naive mode). base: dict with the identity columns
     (metric/method_a/method_b).
@@ -507,6 +514,11 @@ def _pairwise_record(x, y, labels, base, cluster_agg='median', n_resamples=10000
         'median_diff_a_minus_b': float(np.median(d)) if len(d) else float('nan'),
         'mean_diff_a_minus_b': float(np.mean(d)) if len(d) else float('nan'),
         'cl_effect_paired': common_language_paired(d),
+        'median_diff_unit_paired_naive': (float(np.median(d)) if len(d)
+                                          else float('nan')),
+        'mean_diff_unit_paired_naive': (float(np.mean(d)) if len(d)
+                                        else float('nan')),
+        'cl_effect_unit_paired_naive': common_language_paired(d),
         'rank_biserial_r_unit_naive': rank_biserial_matched(d),
         'wilcoxon_W_unit_naive': w_cell['statistic'],
         'pvalue_unit_naive': w_cell['pvalue'],
@@ -721,7 +733,10 @@ def run_scrna_benchmark_stats(df, out_prefix, reference='infercnv',
                           'unit; BCa 95% CI (all NAIVE)'),
         'naive_columns_kept_for_comparison': ['pvalue_unit_naive',
                                               'rank_biserial_r_unit_naive',
-                                              'wilcoxon_W_unit_naive'],
+                                              'wilcoxon_W_unit_naive',
+                                              'median_diff_unit_paired_naive',
+                                              'mean_diff_unit_paired_naive',
+                                              'cl_effect_unit_paired_naive'],
         'diagnostics': 'ICC(1,1) of the paired differences within clusters (one-way '
                        'ANOVA, method of moments); design effect DE = 1 + (m0-1)*ICC; '
                        'n_effective = n_units / DE; p_inflation_ratio = cluster P / naive P',
