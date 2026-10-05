@@ -33,9 +33,9 @@ the MATERIAL, patient or cell line - exactly like stat_tests.py):
     adjacent pair of the ordering is NOT separable (a fully separable chain
     would be a strict, not an approximate, ordering).
 *   Separation: ALL k(k-1)/2 pairwise comparisons run as two-sided Wilcoxon
-    signed-rank tests on the per-material paired differences
-    (zero_method='zsplit', as in stat_tests.py), Holm-Bonferroni corrected
-    within the metric family.  Method a of a comparison is always the
+    signed-rank tests on the per-material differences of the two methods'
+    medians (zero_method='zsplit', as in stat_tests.py), Holm-Bonferroni
+    corrected within the metric family.  Method a of a comparison is always the
     BETTER-ranked method, so "a outperforms b" is confirmed iff
     p_holm <= alpha AND r > 0 (r = matched-pairs rank-biserial; two-sided P
     plus the sign of r, the same convention as the paper).
@@ -159,10 +159,11 @@ def _pair_stats(x, y, labels, cluster_agg='median', n_resamples=2000, seed=1):  
 
     A light twin of stat_tests._pairwise_record: the two-sided Wilcoxon
     signed-rank test, the matched-pairs rank-biserial r and its 95%
-    percentile-bootstrap CI all run on the per-cluster (material)
-    aggregation of the paired differences d = x - y, exactly as in
-    stat_tests.py (labels=None -> naive per-unit mode).  x is the
-    BETTER-ranked method's values, so r > 0 means "x outperforms y".
+    percentile-bootstrap CI all run on the paired differences of the two
+    methods' per-cluster (material) aggregates - exactly the columns of the
+    Friedman/MCB complete-block matrix - as in stat_tests.py (labels=None ->
+    naive per-unit mode).  x is the BETTER-ranked method's values, so
+    r > 0 means "x outperforms y".
     """
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -174,9 +175,13 @@ def _pair_stats(x, y, labels, cluster_agg='median', n_resamples=2000, seed=1):  
     x, y = x[ok], y[ok]
     d = x - y
     if labels is not None:
-        cm = (pd.Series(d, index=pd.Index(labels, dtype=object))
-              .groupby(level=0).agg(cluster_agg).sort_index())
-        dv = cm.to_numpy(dtype=float)
+        idx = pd.Index(labels, dtype=object)
+        x_cl = pd.Series(x, index=idx).groupby(level=0).agg(cluster_agg).sort_index()
+        y_cl = pd.Series(y, index=idx).groupby(level=0).agg(cluster_agg).sort_index()
+        # Difference of the two methods' per-cluster aggregates (the
+        # Friedman/MCB matrix columns), not the per-cluster median of the
+        # per-cell differences: median(x-y) != median(x)-median(y).
+        dv = (x_cl - y_cl).to_numpy(dtype=float)
     else:
         dv = d
     w = _ST.wilcoxon_signed_rank(dv, np.zeros_like(dv)) if len(dv) else None
@@ -203,7 +208,7 @@ def _pair_stats(x, y, labels, cluster_agg='median', n_resamples=2000, seed=1):  
         'rank_biserial_r': r,
         'ci95_r_low': r_lo, 'ci95_r_high': r_hi, 'ci_r_method': r_ci_method,
         'wilcoxon_W': w['statistic'] if w else float('nan'),
-        'median_diff_a_minus_b': float(np.median(d)) if len(d) else float('nan'),
+        'median_diff_a_minus_b': float(np.median(dv)) if len(dv) else float('nan'),
         'note': note,
     }
 
@@ -229,22 +234,36 @@ def bootstrap_order_stability(cmat, n_resamples=2000, seed=1,
     g = len(leading_group) if leading_group is not None else 0
     want = set(leading_group) if leading_group is not None else None
     rng = np.random.default_rng(seed)
+    b = int(n_resamples)
     obs_mr = sps.rankdata(mat, axis=1).mean(axis=0)
-    rhos, ws, top_sets = [], [], []
-    for _ in range(int(n_resamples)):
-        idx = rng.integers(0, n, n)
-        sub = mat[idx]
-        mr = sps.rankdata(sub, axis=1).mean(axis=0)
-        rhos.append(_spearman(mr, obs_mr))
+    obs_c = sps.rankdata(obs_mr)
+    obs_c = obs_c - obs_c.mean()
+    obs_ss = float(np.sum(obs_c ** 2))
+    want_idx = (np.sort([names.index(m) for m in leading_group])
+                if 0 < g < k and names is not None and want is not None else None)
+    rhos, ws = np.empty(b, dtype=float), np.empty(b, dtype=float)
+    top_ok = np.zeros(b, dtype=bool) if want_idx is not None else None
+    # Vectorised resampling in chunks of resamples (bounds the b x n x k memory).
+    chunk = max(1, int(2_000_000 // max(n * k, 1)))
+    for start in range(0, b, chunk):
+        stop = min(start + chunk, b)
+        sub = mat[rng.integers(0, n, size=(stop - start, n))]
+        mr = sps.rankdata(sub, axis=2).mean(axis=1)          # (resamples, k)
+        # Spearman rho = Pearson correlation of the mean-rank vectors
+        # (scipy.stats.spearmanr on ranks with average ties).
+        mrc = sps.rankdata(mr, axis=1)
+        mrc = mrc - mrc.mean(axis=1, keepdims=True)
+        den = np.sqrt(np.sum(mrc ** 2, axis=1) * obs_ss)
+        with np.errstate(invalid='ignore', divide='ignore'):
+            rhos[start:stop] = np.where(den > 0, (mrc @ obs_c) / den, np.nan)
         # Kendall's W from the (tie-uncorrected) Friedman chi-square, the
         # same statistic scipy.stats.friedmanchisquare computes
-        s = float(np.sum((mr - (k + 1.0) / 2.0) ** 2))
-        chi2 = 12.0 * n * s / (k * (k + 1.0))
-        ws.append(chi2 / (n * (k - 1.0)))
-        if 0 < g < k and names is not None and want is not None:
-            top_sets.append(set(names[i] for i in np.argsort(-mr)[:g]))
-    rhos = np.asarray([v for v in rhos if np.isfinite(v)], dtype=float)
-    ws = np.asarray(ws, dtype=float)
+        s = np.sum((mr - (k + 1.0) / 2.0) ** 2, axis=1)
+        ws[start:stop] = (12.0 * n * s / (k * (k + 1.0))) / (n * (k - 1.0))
+        if want_idx is not None:
+            top = np.sort(np.argsort(-mr, axis=1, kind='stable')[:, :g], axis=1)
+            top_ok[start:stop] = np.all(top == want_idx, axis=1)
+    rhos = rhos[np.isfinite(rhos)]
     out = {
         'n_resamples': int(n_resamples),
         'rho_mean': float(np.mean(rhos)) if len(rhos) else float('nan'),
@@ -256,9 +275,8 @@ def bootstrap_order_stability(cmat, n_resamples=2000, seed=1,
                              float(np.percentile(ws, 97.5))]
                             if len(ws) else None),
     }
-    if top_sets:
-        out['leading_group_reproduction'] = float(
-            sum(1 for s in top_sets if s == want) / len(top_sets))
+    if top_ok is not None:
+        out['leading_group_reproduction'] = float(np.mean(top_ok))
     return out
 
 
@@ -580,8 +598,8 @@ def run_scrna_winner_analysis(df, out_prefix, cluster_key_cols=None,
         'cluster_key_source': cluster_key_source,
         'omnibus_test': 'Friedman per metric on per-material method medians '
                         '(complete blocks); Kendall W + bootstrap 95% CI',
-        'posthoc_test': 'two-sided Wilcoxon signed-rank on per-material '
-                        'paired differences for ALL k(k-1)/2 method pairs, '
+        'posthoc_test': 'two-sided Wilcoxon signed-rank on the per-material '
+                        'differences of the method medians for ALL k(k-1)/2 method pairs, '
                         'Holm-Bonferroni within each metric family',
         'decision_rule': ('method a (better Friedman mean rank) outperforms b '
                           'iff Holm-adjusted two-sided P <= alpha AND '
@@ -754,7 +772,7 @@ def stepdown_caption(verdict_lines, alpha=0.05, unit_desc='materials'):
         'pairs when none is separable). Each row reports, in this order: '
         '$n$, the effective sample size (number of independent '
         F'{unit_desc}); $p$, the Holm--Bonferroni-adjusted two-sided Wilcoxon '
-        F'signed-rank P value of the per-{unit} paired differences (bold when '
+        F'signed-rank P value of the per-{unit} differences of the method medians (bold when '
         F'the separation is confirmed at the {alpha:g} family-wise level, '
         'i.e.\\ $p \\le \\alpha$ and $r > 0$); $r$, the matched-pairs '
         'rank-biserial effect size; and the \\qty{95}{\\percent} percentile-bootstrap CI of '

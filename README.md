@@ -133,7 +133,7 @@ uses, adapted to the co-sequencing design:
   measured demonstration of the failure mode).
 * **Tests:** Friedman omnibus per metric across methods (on per-material
   medians); two-sided Wilcoxon signed-rank + exact sign test post-hoc on the
-  per-material medians of the paired per-cell differences (reference method
+  per-material differences of the two methods' medians (reference method
   vs. every other; `--stats_all_pairs` for all pairs); Holm-Bonferroni
   correction within each metric family.
 * **Effect size:** matched-pairs rank-biserial correlation r (positive = the
