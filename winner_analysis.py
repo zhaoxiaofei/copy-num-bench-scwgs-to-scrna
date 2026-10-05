@@ -522,9 +522,10 @@ def run_scrna_winner_analysis(df, out_prefix, cluster_key_cols=None,
     # ---- resolve the cluster key (mirrors stat_tests.run_scrna_benchmark_stats)
     if cluster_key_cols is None:
         cluster_mode = 'material'
-        cluster_key_source = ('default: material derived from the dataset name '
-                              '(patient / cell line; datasets sharing it are '
-                              'one unit)')
+        cluster_key_source = ('default: material from dataset_materials.'
+                              'MATERIAL_DATASETS (primary sample -> derived '
+                              'dataset names; all datasets of one primary '
+                              'sample are one unit)')
     elif list(cluster_key_cols) == []:
         cluster_mode = 'naive'
         cluster_key_source = 'clustering disabled: NAIVE per-unit level'
@@ -543,9 +544,10 @@ def run_scrna_winner_analysis(df, out_prefix, cluster_key_cols=None,
     if cluster_mode == 'naive':
         df['cluster_id'] = ''
     elif cluster_mode == 'material':
+        # exact lookup in dataset_materials.MATERIAL_DATASETS (primary sample
+        # -> derived dataset names): all datasets of one primary sample are
+        # ONE independent unit
         df['cluster_id'] = df['dataset'].map(_ST.material_from_dataset)
-        _mat_map = _ST._collapse_materials(df['cluster_id'].unique())
-        df['cluster_id'] = df['cluster_id'].map(_mat_map)
     elif cluster_mode == 'dataset':
         df['cluster_id'] = df['dataset'].map(
             lambda s: _ST._norm_missing(s) or '(missing)')

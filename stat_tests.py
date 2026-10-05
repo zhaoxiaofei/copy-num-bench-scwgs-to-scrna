@@ -69,10 +69,14 @@ biological MATERIAL (patient or cell line) behind the datasets - while
 per-cell quantities are kept as DESCRIPTIVE statistics and as flagged naive
 (non-inferential) comparisons:
 
-* Default cluster key: `material`, derived from the dataset name (chips,
-  run/SHA accessions and technology prefixes are stripped, so all datasets of
-  one patient / cell line collapse into one cluster). Each material is one
-  effective sample; n in the LaTeX table is the number of materials.
+* Default cluster key: `material`, resolved through the explicit
+  `dataset_materials.MATERIAL_DATASETS` table (primary sample -> derived
+  dataset names; see dataset_materials.py).  Chips of one patient, one cell
+  line sequenced by different technologies and the configuration variants of
+  one cell line are all listed under one primary sample, so they form ONE
+  cluster; a dataset that is not listed is reported once and kept as its own
+  material.  Each material is one effective sample; n in the LaTeX table is
+  the number of materials.
   `--cluster-key dataset` analyses at the per-dataset level (a sensitivity
   analysis that treats chips of one patient as independent), and
   `--cluster-key none` reverts to the naive per-cell tests (discouraged).
@@ -143,6 +147,8 @@ import warnings
 
 import numpy as np
 import pandas as pd
+
+from dataset_materials import material_from_dataset
 
 try:
     import scipy
@@ -451,72 +457,6 @@ def _norm_missing(v):
     return str(v).strip()
 
 
-# Accession / run / study id fragments removed when deriving the shared
-# biological material from a dataset name.
-_MAT_ACCESSION_RE = re.compile(r'_(?:SAMN|SRR|ERR|DRR|SRP|PRJNA|GSM|HCA)[0-9A-Za-z]*')
-# Technology prefixes of the co-sequencing studies.
-_MAT_TECH_RE = re.compile(r'^(?:wellDR-seq|scONE-seq|DNTR-seq|wellDR)_')
-# Chip / replicate suffixes of one patient's sample.
-_MAT_CHIP_RE = re.compile(r'_chip[0-9]+')
-
-
-def material_from_dataset(dataset):
-    """Independent biological material (patient / cell line) behind a dataset.
-
-    Datasets of the benchmark are named like
-    'BCIS106T_chip1_SAMN48409192_SRR33511671' or 'scONE-seq_HCT116_HUVEC_H9_as_T_N':
-    the shared material is recovered by stripping the chip/replicate suffix,
-    the run/sample/study accessions and the technology prefix. Datasets that
-    share the resulting token (chips of one patient; one cell line sequenced
-    by different technologies) form ONE cluster, because the per-method
-    results on them are correlated through the shared material. A token that
-    is empty or purely numeric falls back to the full dataset name (each
-    dataset its own unit).
-
-    Reference-cell configuration variants of one dataset (e.g. scONE-seq HCT116
-    run with and without given HUVEC/H9 reference cells) collapse onto their
-    base material as well - see _collapse_materials, applied by
-    run_scrna_benchmark_stats in the default mode.
-    """
-    s = _norm_missing(dataset)
-    if not s:
-        return '(missing)'
-    s = _MAT_CHIP_RE.sub('', s)
-    s = _MAT_ACCESSION_RE.sub('', s)
-    s = _MAT_TECH_RE.sub('', s)
-    s = s.strip('_ ')
-    if not s or s.isdigit():
-        return str(dataset)
-    return s
-
-
-def _collapse_materials(ids):
-    """Map reference-cell configuration variants onto their base material.
-
-    A material whose underscore-token sequence strictly EXTENDS another
-    occurring material is the same biological sample analysed with a
-    different reference-cell configuration (e.g. 'HCT116_HUVEC_H9_as_T_N'
-    extends 'HCT116'): the evaluated tumour cells are the same, so the two
-    configurations are ONE independent unit and the variant collapses onto
-    the shortest present token-prefix. Materials that are not prefix-related
-    (e.g. 'Cellline_mixing_experiment_1_1' vs '..._1_2' vs '..._2', which are
-    different mixtures) stay separate. Returns {material: base_material}.
-    """
-    id_list = [str(i) for i in ids]
-    id_set = set(id_list)
-    mapping = {}
-    for m in id_list:
-        toks = m.split('_')
-        base = m
-        for k in range(1, len(toks)):
-            cand = '_'.join(toks[:k])
-            if cand in id_set:
-                base = cand
-                break          # shortest present token-prefix wins
-        mapping[m] = base
-    return mapping
-
-
 def _pairwise_record(x, y, labels, base, cluster_agg='median', n_resamples=10000,
                      seed=1, cluster_key_str=''):
     """One pairwise-comparison record.
@@ -676,8 +616,10 @@ def run_scrna_benchmark_stats(df, out_prefix, reference='infercnv',
     # ---- resolve the cluster key (the independent experimental unit) ----
     if cluster_key_cols is None:
         cluster_mode = 'material'
-        cluster_key_source = ('default: material derived from the dataset name '
-                              '(patient / cell line; datasets sharing it are one unit)')
+        cluster_key_source = ('default: material from dataset_materials.'
+                              'MATERIAL_DATASETS (primary sample -> derived '
+                              'dataset names; all datasets of one primary '
+                              'sample are one unit)')
     elif list(cluster_key_cols) == []:
         cluster_mode = 'naive'
         cluster_key_source = 'clustering disabled (--cluster-key none): NAIVE per-unit level'
@@ -701,11 +643,11 @@ def run_scrna_benchmark_stats(df, out_prefix, reference='infercnv',
     if cluster_mode == 'naive':
         df['cluster_id'] = ''
     elif cluster_mode == 'material':
+        # Exact lookup in dataset_materials.MATERIAL_DATASETS (primary sample
+        # -> derived dataset names); datasets of one primary sample are ONE
+        # independent unit.  Unknown dataset names are reported once by
+        # material_from_dataset and kept as their own unit.
         df['cluster_id'] = df['dataset'].map(material_from_dataset)
-        # reference-cell configuration variants of one base dataset collapse
-        # onto their base material (one independent unit per sample)
-        _mat_map = _collapse_materials(df['cluster_id'].unique())
-        df['cluster_id'] = df['cluster_id'].map(_mat_map)
     elif cluster_mode == 'dataset':
         df['cluster_id'] = df['dataset'].map(lambda s: _norm_missing(s) or '(missing)')
     else:
@@ -809,6 +751,7 @@ def run_scrna_benchmark_stats(df, out_prefix, reference='infercnv',
     }
 
     pairwise_rows, friedman_rows = [], []
+    skipped_no_reference = []
 
     def _fr_row(level, mat, n_units, metric):
         complete = mat.dropna(axis=0, how='any')
@@ -848,8 +791,24 @@ def run_scrna_benchmark_stats(df, out_prefix, reference='infercnv',
 
         # ---- pairwise post-hoc ----
         others = [m for m in ok_methods if m != reference]
-        pairs = ([(a, b) for a in ok_methods for b in ok_methods if a < b]
-                 if all_pairs else [(reference, b) for b in others])
+        if all_pairs:
+            pairs = [(a, b) for a in ok_methods for b in ok_methods if a < b]
+        elif reference in ok_methods:
+            pairs = [(reference, b) for b in others]
+        else:
+            # The reference has no evaluable value for this metric (e.g.
+            # infercnv on the 'Fraction of the scWGS genome diploid in
+            # scRNA-normal cells' metric, which infercnv never defines), so
+            # reference-vs-rest comparisons are undefined.  Skip only this
+            # metric's pairwise family (its Friedman omnibus row above is
+            # still written) instead of aborting the whole table.
+            pairs = []
+            skipped_no_reference.append(metric)
+            logging.warning(
+                'metric %r: reference method %r has no evaluable values; '
+                'reference-vs-rest pairwise comparisons are skipped for this '
+                'metric (use --all-pairs to compare the remaining methods)',
+                metric, reference)
         records = []
         for a, b in pairs:
             both = piv[[a, b]].dropna(axis=0, how='any')
@@ -874,6 +833,14 @@ def run_scrna_benchmark_stats(df, out_prefix, reference='infercnv',
     for r in pairwise_rows:
         r.setdefault('pvalue_holm', float('nan'))
         r.setdefault('reject_holm', '')
+
+    if skipped_no_reference:
+        settings['metrics_skipped_no_reference'] = list(skipped_no_reference)
+        settings['metrics_skipped_no_reference_note'] = (
+            F'reference method {reference!r} has no evaluable values for these '
+            'metric(s), so no reference-vs-rest pairwise family is defined; '
+            'their Friedman omnibus rows are still written. Use --all-pairs to '
+            'compare the remaining methods within these metrics.')
 
     _write_tables(out_prefix, pairwise_rows, friedman_rows, settings)
     _write_latex_table(F'{out_prefix}.pairwise.tsv',
@@ -1311,11 +1278,13 @@ def main(argv=None):
                         help='Test all method pairs, not only reference vs rest.')
     parser.add_argument('--cluster-key', default=None,
                         help='Columns defining the independent experimental unit '
-                             '(cluster). Default: material (the patient / cell '
-                             'line derived from the dataset name; datasets '
-                             'sharing it are one unit). "dataset" analyses at the '
-                             'per-dataset level; "none" disables clustering '
-                             '(naive per-unit tests, discouraged).')
+                             '(cluster). Default: material, resolved through the '
+                             'explicit dataset_materials.MATERIAL_DATASETS table '
+                             '(primary sample -> derived dataset names; all '
+                             'datasets of one primary sample are one unit). '
+                             '"dataset" analyses at the per-dataset level; '
+                             '"none" disables clustering (naive per-unit tests, '
+                             'discouraged).')
     parser.add_argument('--cluster-agg', choices=['median', 'mean'], default='median',
                         help='Aggregation of the per-unit differences within each '
                              'cluster (default median).')

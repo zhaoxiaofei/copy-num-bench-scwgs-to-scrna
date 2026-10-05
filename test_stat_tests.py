@@ -12,8 +12,8 @@ Part A  Library API, default material clusters: 12 datasets built from 7
         95% CI per row.
 Part B  Sensitivity modes: --cluster-key dataset (12 units) and
         --cluster-key none (naive, flagged).
-Part C  Material derivation unit checks (chips / accessions / technologies /
-        reference-cell configuration collapse).
+Part C  MATERIAL_DATASETS table checks (primary sample -> derived dataset
+        names; raw and display spellings; unknown datasets kept separate).
 Part D  CLI round trip on a synthetic results/ tree of evaluation TSVs:
         stat_tests.py -i ... -o ... and --latex-table, plus the
         plot_cnv_heatmaps.py integration (stats tables written by default,
@@ -155,6 +155,7 @@ print('OK Part B: dataset-level sensitivity mode (n=12)')
 
 # ------------------------------------------------------------------ Part C --
 cases = {
+    # raw folder names (mapped through dataset_materials.DATASET_NAME_ALIASES)
     'BCIS106T_chip1_SAMN48409192_SRR33511671': 'BCIS106T',
     'ECIS44T_chip3_SAMN40389279_SRR28357493': 'ECIS44T',
     'MDA231_chip2_SAMN40389269_SRR33482483': 'MDA231',
@@ -162,16 +163,92 @@ cases = {
     'HCT116_PRJNA603321': 'HCT116',
     'wellDR3_SAMN48409182_SRR33511681': 'wellDR3',
     'A375_HCA00102_PRJNA603321': 'A375',
+    # display dataset names (as written by plot_cnv_heatmaps.py): every
+    # spelling of one primary sample must map to that primary sample
+    'DNTR-seq_PRJNA603321_HCT116_noRefCells': 'HCT116',
+    'scONE-seq_PRJNA768428_HCT116_noRefCells': 'HCT116',
+    'scONE-seq_PRJNA768428_HCT116_asTumor_HUVEC-H9_asRef': 'HCT116',
+    'scONE-seq_PRJNA768428_NPC43_noRefCells': 'NPC43',
+    'scONE-seq_PRJNA768428_NPC43_asTumor_HUVEC-H9_asRef': 'NPC43',
+    'scONE-seq_HUVEC_H9': 'HUVEC_H9',
+    'wellDR-seq_ECIS44T_chip4_SRR28357492_tumorNormalMix': 'ECIS44T',
+    'wellDR-seq_Cellline_mixing_experiment_1_1_SRR33511680_noRefCells':
+        'Cellline_mixing_experiment_1_1',
+    'wellDR-seq_Cellline_mixing_experiment_2_SRR33511678_noRefCells':
+        'Cellline_mixing_experiment_2',
+    'wellDR-seq_BCIS106T_chip2_SRR33511670_tumorNormalMix$^B$': 'BCIS106T',
 }
 for ds, want in cases.items():
     assert stat_tests.material_from_dataset(ds) == want, ds
-mat_map = stat_tests._collapse_materials(
-    df['dataset'].map(stat_tests.material_from_dataset).unique())
-assert mat_map['HCT116_HUVEC_H9_as_T_N'] == 'HCT116'
-assert mat_map['NPC43_HUVEC_H9_as_T_N'] == 'NPC43'
-assert mat_map['Cellline_mixing_experiment_1_1'] == 'Cellline_mixing_experiment_1_1'
-assert mat_map['Cellline_mixing_experiment_2'] == 'Cellline_mixing_experiment_2'
-print('OK Part C: material derivation + configuration-variant collapse')
+
+# The table itself: 21 primary samples covering the 41 benchmark datasets.
+from dataset_materials import DATASET_MATERIAL, MATERIAL_DATASETS  # noqa: E402
+assert len(MATERIAL_DATASETS) == 21, len(MATERIAL_DATASETS)
+assert len(DATASET_MATERIAL) == 41, len(DATASET_MATERIAL)
+assert len(MATERIAL_DATASETS['HCT116']) == 3
+assert len(MATERIAL_DATASETS['NPC43']) == 2
+assert len(MATERIAL_DATASETS['ECIS44T']) == 5
+assert len(MATERIAL_DATASETS['ECIS25T']) == 3
+
+# A dataset that is not listed is kept as its own material and reported (the
+# conservative choice), never silently merged into another material.
+unknown = 'wellDR-seq_NEWDATASET_SRR99999999_tumorNormalMix'
+assert stat_tests.material_from_dataset(unknown) == unknown
+assert stat_tests.material_from_dataset('DNTR-seq_PRJNA603321_HCT116_noRefCells') == 'HCT116'
+print('OK Part C: MATERIAL_DATASETS table (21 primary samples / 41 datasets), '
+      'raw+display spellings, unknown datasets kept separate')
+
+# Part C.2: the same check end-to-end on the real names - 7 datasets but only
+# 3 independent materials (HCT116 x3, NPC43 x2, ECIS44T x2 chips).
+real_cases = [
+    'DNTR-seq_PRJNA603321_HCT116_noRefCells',
+    'scONE-seq_PRJNA768428_HCT116_noRefCells',
+    'scONE-seq_PRJNA768428_HCT116_asTumor_HUVEC-H9_asRef',
+    'scONE-seq_PRJNA768428_NPC43_noRefCells',
+    'scONE-seq_PRJNA768428_NPC43_asTumor_HUVEC-H9_asRef',
+    'wellDR-seq_ECIS44T_chip1_SRR28357495_tumorNormalMix',
+    'wellDR-seq_ECIS44T_chip2_SRR28357494_tumorNormalMix',
+]
+rows_real = []
+for ds in real_cases:
+    for meth, eff in method_effect.items():
+        for c in range(6):
+            rows_real.append({
+                'dataset': ds, 'method': meth,
+                'metric': 'Pearson Correlation Coefficient',
+                'value': float(np.clip(0.7 + eff + rng.normal(0, 0.04), 0, 1)),
+                'ground_truth_cell': F'{ds}_cell{c}'})
+df_real = pd.DataFrame(rows_real)
+prefix_real = os.path.join(OUT, 'figC2')
+stat_tests.run_scrna_benchmark_stats(
+    df_real, prefix_real, reference='infercnv', n_resamples=200, seed=3)
+pw_real = pd.read_csv(prefix_real + '.pairwise.tsv', sep='\t')
+assert pw_real['n_clusters'].eq(3).all(), pw_real['n_clusters'].unique()
+with open(prefix_real + '.json') as fh:
+    js_real = json.load(fh)
+assert js_real['independence']['n_clusters'] == 3
+print('OK Part C.2: 7 real cell-line datasets -> 3 materials (HCT116, NPC43, '
+      'ECIS44T) in the end-to-end tests')
+
+# Part C.3: a metric on which the reference method has no evaluable value
+# (infercnv on the scWGS-diploid-fraction metric in the real data) must not
+# abort the pairwise table: only that metric's reference-vs-rest family is
+# skipped and recorded; its Friedman row and all other metrics stay.
+df_nanref = df.copy()
+skip_metric = metrics[1]
+df_nanref.loc[(df_nanref['metric'] == skip_metric)
+              & (df_nanref['method'] == 'infercnv'), 'value'] = np.nan
+prefix_nanref = os.path.join(OUT, 'figC3')
+stat_tests.run_scrna_benchmark_stats(
+    df_nanref, prefix_nanref, reference='infercnv', n_resamples=200, seed=4)
+pw_nr = pd.read_csv(prefix_nanref + '.pairwise.tsv', sep='\t')
+assert skip_metric not in set(pw_nr['metric'])
+fr_nr = pd.read_csv(prefix_nanref + '.friedman.tsv', sep='\t')
+assert fr_nr['metric'].eq(skip_metric).any()
+with open(prefix_nanref + '.json') as fh:
+    js_nr = json.load(fh)
+assert js_nr['metrics_skipped_no_reference'] == [skip_metric]
+print('OK Part C.3: metric without reference values is skipped, not fatal')
 
 # ------------------------------------------------------------------ Part D --
 TREE = os.path.join(OUT, 'results')
@@ -278,7 +355,11 @@ import winner_analysis  # noqa: E402
 
 rngE = np.random.default_rng(11)
 methodsE = ['infercnv', 'copykat', 'casper', 'scevan', 'conicsmat']
-matsE = [F'EM{i}' for i in range(20)]
+# 20 primary samples of the real benchmark, addressed by their real derived
+# dataset names, so the default MATERIAL_DATASETS clustering applies to this
+# synthetic frame (and to the CLI subprocesses that re-read it).
+matsE = [m for m in sorted(MATERIAL_DATASETS) if m != 'HUVEC_H9']
+assert len(matsE) == 20, matsE
 eff_win = {'infercnv': 0.30, 'copykat': 0.18, 'casper': 0.10,
            'scevan': 0.04, 'conicsmat': 0.00}
 eff_top2 = {'infercnv': 0.20, 'copykat': 0.20, 'casper': 0.06,
@@ -286,8 +367,7 @@ eff_top2 = {'infercnv': 0.20, 'copykat': 0.20, 'casper': 0.06,
 rowsE = []
 for mat in matsE:
     shock = rngE.normal(0, 0.03)
-    for chip in (1, 2):
-        ds = F'{mat}_chip{chip}_SRR9{chip:04d}'
+    for ds in MATERIAL_DATASETS[mat]:
         for meth in methodsE:
             v_win = 0.20 + eff_win[meth] + shock + rngE.normal(0, 0.05)
             v_top2 = 0.20 + eff_top2[meth] + shock + rngE.normal(0, 0.05)
@@ -308,7 +388,8 @@ for mat in matsE:
                               'value': max(1.0, v_time + rngE.normal(0, 1.0)),
                               'ground_truth_cell': cell})
 dfE = pd.DataFrame(rowsE)
-print(F'Part E: synthetic frame {len(dfE)} rows, 20 materials x 2 chips, '
+print(F'Part E: synthetic frame {len(dfE)} rows, 20 primary samples (real '
+      F'dataset names), '
       F'{len(methodsE)} methods, 4 metrics (incl. lower-is-better m_runtime)')
 
 prefixE = os.path.join(OUT, 'figE')

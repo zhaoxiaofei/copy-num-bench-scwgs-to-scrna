@@ -108,11 +108,22 @@ uses, adapted to the co-sequencing design:
 * **Design:** every method is evaluated on the same cells of the same
   datasets, so per-cell metrics are paired (blocked) by cell. The
   independent experimental unit is the biological **material** (patient /
-  cell line) behind the datasets — derived from the dataset name, so chips of
-  one patient (`BCIS106T_chip1/chip2`, `ECIS44T_chip1-5`, …), one cell line
-  across technologies (`HCT116` in DNTR-seq and scONE-seq) and
-  reference-cell configuration variants of one dataset collapse into ONE
-  unit. `--stats_cluster_key dataset` analyses at the per-dataset level
+  cell line) behind the datasets.  The mapping is one explicit table in
+  `dataset_materials.py`, `MATERIAL_DATASETS` (primary sample -> derived
+  dataset names): one entry lists every dataset derived from the same
+  material, e.g. chips of one patient (`BCIS106T_chip1/chip2`,
+  `ECIS44T_chip1-5`, …) or one cell line across technologies and
+  configurations (`'HCT116'` covers its DNTR-seq run plus both scONE-seq
+  configurations, `NPC43` its two scONE-seq configurations).  Dataset
+  identity is therefore data, not a name-parsing rule, and the same module
+  also maps the raw folder spellings (`DATASET_NAME_ALIASES`) used when the
+  CLI reads the evaluation TSVs directly.  A dataset that is not listed is
+  reported once and kept as its own material (the conservative choice).
+  The per-method values of a material's datasets are aggregated (median,
+  non-failed rows preferred) BEFORE the tests and before any effect-size
+  computation, so each material contributes one paired difference and one
+  bootstrap unit.
+  `--stats_cluster_key dataset` analyses at the per-dataset level
   (sensitivity analysis); `none` reverts to the naive per-cell tests
   (discouraged: pseudoreplication — see the module docstring for the
   measured demonstration of the failure mode).
