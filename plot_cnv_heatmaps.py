@@ -1739,10 +1739,11 @@ def plot_metric_method_swarm_grid(
             "method_display_names": {m: display_method_name(m)
                                       for m in col_methods},
             "dataset_exclusion_rule": ("diploid-like tumors (purity-derived) and "
-                                        "wellDR-seq chip1-only datasets are "
-                                        "excluded from the main figure exactly as "
-                                        "in should_include_dataset_for_swarm_grid; "
-                                        "they remain in the supplementary heatmaps"),
+                                       "wellDR-seq datasets other than the chip1 "
+                                       "profile of each sample are excluded from "
+                                       "the main figure exactly as in "
+                                       "should_include_dataset_for_swarm_grid; "
+                                       "they remain in the supplementary heatmaps"),
             "n_datasets": int(long_df["dataset"].nunique()),
             "n_methods": int(long_df["method"].nunique()),
             "n_rows": int(len(long_df)),
